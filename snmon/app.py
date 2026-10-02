@@ -24,10 +24,11 @@ from .config import BLOCK_SECONDS, ROOT, Config
 from .detector import Detector, Signal
 from .discord import Discord
 from .mempool import Mempool
-from .bars import Bars
+from .bars import BUCKET, Bars
 from .meta import Meta, Trade
+from .news import NewsMonitor
 from .rpc import Rpc
-from .trend import TrendMonitor, parse_timeframes
+from .trend import TrendBoard, TrendMonitor, parse_timeframes
 
 log = logging.getLogger("snmon")
 
@@ -65,6 +66,14 @@ class App:
         self._archive: Rpc | None = None
         self._alerts_file = ROOT / "data" / "alerts.jsonl"
         self._alerts_file.parent.mkdir(exist_ok=True)
+        self.news: NewsMonitor | None = None
+        if cfg.news_webhook_url and cfg.news_discord_token:
+            self.news_discord = Discord(cfg.news_webhook_url, dry_run=cfg.dry_run)
+            self.news = NewsMonitor(
+                cfg.news_discord_token, self.news_discord, self.meta,
+                price_now=lambda n: self.det.history.get(self.det.last_block, {}).get(n),
+                change=self.det.change, guild_hint=cfg.news_guild,
+                min_team_chars=cfg.news_min_team_chars, dry_run=cfg.dry_run)
         self.trend: TrendMonitor | None = None
         if cfg.trend_webhook_url:
             self.bars = Bars(ROOT / "data" / "bars.db")
@@ -107,6 +116,10 @@ class App:
             asyncio.create_task(coro)
         if self.trend:
             asyncio.create_task(self._trend_start())
+        if self.news:
+            asyncio.create_task(self._news_start())
+        elif self.cfg.news_webhook_url:
+            log.warning("news monitor is off: add NEWS_DISCORD_TOKEN (the alt account's token) to .env")
         if self.cfg.mempool:
             self.mempool = mp = Mempool(self.feed, self.meta, self.cfg.mempool_endpoints,
                                         self.cfg.mempool_min_pct, self.cfg.mempool_poll_ms,
@@ -119,7 +132,9 @@ class App:
 
     async def close(self) -> None:
         """Clean shutdown (pm2 restart): close HTTP sessions so nothing is left dangling."""
-        for d in (self.discord, getattr(self, "trend_discord", None)):
+        if self.news:
+            await self.news.client.close()
+        for d in (self.discord, getattr(self, "trend_discord", None), getattr(self, "news_discord", None)):
             if d is not None and d.session is not None:
                 await d.session.close()
 
@@ -355,7 +370,7 @@ class App:
         missing = len(self.bars.missing_plan(head))
         self.trend.history = Rpc(self.cfg.trend_history_endpoint)
         self.trend.history.start()
-        self.trend.evaluate(self.feed.last_number or head, silent=True)
+        await self._trend_warmup(self.feed.last_number or head)
         self.trend.ready = True
         ok = {tf.name: int(self.trend.fits[tf.name].ok.sum()) for tf in self.trend.tfs}
         active = sum(int((self.trend.state[tf.name] != 0).sum()) for tf in self.trend.tfs)
@@ -363,6 +378,9 @@ class App:
                       f"{got} backfilled ({missing} gaps left) · subnets with history: "
                       + ", ".join(f"{k} {v}" for k, v in ok.items()) + f" · {active} trends already running"))
         asyncio.create_task(self._trend_gap_loop())
+        if self.cfg.trend_board_seconds > 0 and not self.cfg.dry_run:
+            self.trend.board = TrendBoard(self.trend, ROOT / "data" / "trend_board.json", self.cfg.trend_board_seconds)
+            asyncio.create_task(self.trend.board.run())
         if self.cfg.startup_message and not self.cfg.dry_run and not self._recent_start("last_start_trend"):
             tfs = " · ".join(f"**{tf.name}** ≥{tf.enter:g}% (R² ≥ {tf.r2:g})" for tf in self.trend.tfs)
             await self.trend_discord.send({"embeds": [{
@@ -375,6 +393,28 @@ class App:
                     {"name": "Already trending right now", "value": f"{active} subnet-timeframes (not re-announced)",
                      "inline": False},
                 ],
+            }], "allowed_mentions": {"parse": []}})
+
+    async def _news_start(self) -> None:
+        try:
+            await self.news_discord.start()
+            await self.news.start()
+        except Exception as e:
+            log.error("news monitor could not start: %s", e)
+            return
+        n = sum(1 for c in self.news.channels.values() if c.netuid is not None)
+        teams = sum(1 for c in self.news.channels.values() if c.team_users or c.team_roles)
+        print(fmt.dim(f"{now_str()} ── news monitor live in {self.news.guild_name} as "
+                      f"{(self.news.client.user or {}).get('username')} · {n} subnet channels "
+                      f"({teams} with a team detected) · {len(self.news.staff_roles)} staff roles"))
+        if self.cfg.startup_message and not self.cfg.dry_run and not self._recent_start("last_start_news"):
+            await self.news_discord.send({"embeds": [{
+                "title": "🟢 News monitor is live",
+                "description": (f"Watching **{n} subnet channels** in **{self.news.guild_name}** in real time. "
+                                "Posts here: 📢 @everyone announcements · 🐦 X posts · 📰 team updates "
+                                "(posts with links or real content by each subnet's team). Every card shows the "
+                                "price at the post and the market reaction after 5m, 15m and 1h."),
+                "color": 0x5865F2,
             }], "allowed_mentions": {"parse": []}})
 
     async def _trend_gap_loop(self) -> None:
@@ -396,6 +436,18 @@ class App:
             finally:
                 for r in hist:
                     await r.stop()
+
+    async def _trend_warmup(self, head: int, days: float = 3.0) -> None:
+        """Replay the last few days of 5-minute bars through the trend logic (silently), so a restart
+        remembers trends that are still running — not only those strong enough to start fresh now.
+        A trend stays on until its move halves, so state depends on history, not just on the present."""
+        end = head // BUCKET
+        first = end - int(days * 288)
+        for i, b in enumerate(range(first, end)):
+            self.trend.evaluate(b * BUCKET + BUCKET - 1, silent=True)
+            if i % 12 == 0:
+                await asyncio.sleep(0)  # let the price hot path run between steps
+        self.trend.evaluate(head, silent=True)
 
     def _recent_start(self, name: str) -> bool:
         """True if we started < 10 min ago (pm2 restart / crash loop) — don't repeat 'live' messages."""
@@ -500,7 +552,10 @@ class App:
             print(fmt.dim(f"{now_str()} ── 5m: {len(lat)} blocks · detect median {lat[len(lat) // 2]:.0f} ms, "
                           f"p95 {lat[int(len(lat) * 0.95)]:.0f} ms · first header: {wins}{mp} · "
                           f"alerts {self.alert_count} · pending {self.pending_count}"
-                          + (f" · trends {self.trend.alerts}" if self.trend else "")))
+                          + (f" · trends {self.trend.alerts}" if self.trend else "")
+                          + (f" · news {self.news.posted} (gateway msgs {self.news.stats.get('MESSAGE_CREATE', 0)}, "
+                             f"passive {self.news.stats.get('PASSIVE_UPDATE_V1', 0) + self.news.stats.get('PASSIVE_UPDATE_V2', 0)}"
+                             f", sweep {self.news.stats.get('sweep', 0)})" if self.news else "")))
 
     async def _startup_message(self) -> None:
         if self._recent_start("last_start"):
@@ -541,6 +596,9 @@ class App:
             tfs = parse_timeframes(c.trend_timeframes)
             print(f"  {fmt.dim('trend')}      " + "  ·  ".join(f"{t.name} ≥{t.enter:g}% R²≥{t.r2:g}" for t in tfs)
                   + "  → trend webhook")
+        if c.news_webhook_url:
+            print(f"  {fmt.dim('news')}       " + ("Bittensor Discord subnet channels → news webhook"
+                                                  if c.news_discord_token else "waiting for NEWS_DISCORD_TOKEN in .env"))
         if c.dry_run:
             print(f"  {fmt.dim('mode')}       " + fmt.byellow("DRY RUN — nothing is posted to Discord"))
 

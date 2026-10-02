@@ -56,6 +56,16 @@ class Discord:
         data = await self._request("POST", f"{self.url}?wait=true", payload, files)
         return data.get("id") if data else None
 
+    async def edit(self, message_id: str, payload: dict) -> bool:
+        """Edit now; False if the message is gone (deleted)."""
+        if self.dry_run:
+            return True
+        return await self._request("PATCH", f"{self.url}/messages/{message_id}", payload) is not None
+
+    async def delete(self, message_id: str) -> None:
+        if not self.dry_run:
+            await self._request("DELETE", f"{self.url}/messages/{message_id}", None)
+
     def edit_later(self, message_id: str, payload: dict, files: dict[str, bytes] | None = None) -> None:
         """Queue an edit. With `files`, the message's attachments are replaced by these."""
         if files:

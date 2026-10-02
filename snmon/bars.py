@@ -15,7 +15,6 @@ import asyncio
 import logging
 import sqlite3
 import time
-import warnings
 from pathlib import Path
 
 import numpy as np
@@ -143,10 +142,11 @@ class Bars:
         h = np.where(valid, self.h[rows, :w], np.nan).reshape(points, agg, w)
         lo = np.where(valid, self.l[rows, :w], np.nan).reshape(points, agg, w)
         c = np.where(valid, self.c[rows, :w], np.nan).reshape(points, agg, w)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN groups are expected for gaps
-            hi = np.nanmax(h, axis=1)
-            low = np.nanmin(lo, axis=1)
+        # max/min over each candle's bars; empty candles (gaps) stay NaN — computed without nanmax so no
+        # "All-NaN slice" warnings (warning filters aren't thread-safe and charts render in a thread)
+        empty_h, empty_l = np.isnan(h).all(axis=1), np.isnan(lo).all(axis=1)
+        hi = np.where(empty_h, np.nan, np.where(np.isnan(h), -np.inf, h).max(axis=1))
+        low = np.where(empty_l, np.nan, np.where(np.isnan(lo), np.inf, lo).min(axis=1))
         close = np.full((points, w), np.nan)
         opn = np.full((points, w), np.nan)
         for k in range(agg):

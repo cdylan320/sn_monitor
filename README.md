@@ -72,7 +72,9 @@ line over each timeframe. All subnets are done in one numpy pass, taking about 3
 
 | Timeframe | Fitted on | A trend starts when |
 |---|---|---|
-| 12h | 30-min closes | trend line moves ≥8% and R² ≥ 0.70 |
+| 3h  | 5-min closes  | trend line moves ≥5% and steadiness (R²) ≥ 0.85 |
+| 6h  | 10-min closes | ≥6% and R² ≥ 0.80 |
+| 12h | 30-min closes | ≥8% and R² ≥ 0.70 |
 | 24h | 30-min closes | ≥10% and R² ≥ 0.65 |
 | 3d  | 1-hour closes | ≥12% and R² ≥ 0.60 |
 
@@ -83,6 +85,17 @@ line over each timeframe. All subnets are done in one numpy pass, taking about 3
 These thresholds came from replaying 4–7 days of history for every subnet. They produce
 about 20–25 cards/day across ~129 subnets. SN80's late-September slide registers as a
 24h (−12%, R² 0.82) and 3d (−13%, R² 0.75) downtrend, and its recovery as a 24h uptrend.
+
+**Pullbacks and bounces.** When a short timeframe turns against a longer trend that's still
+running, the card says so instead of calling it a reversal. Example: `↘️ PULLBACK · 12h DOWNTREND
+in a 3d UPTREND · still +4.17% over 3d`.
+
+**Live trend board.** One message always sits at the bottom of the trend channel, listing every
+subnet that's trending right now:
+- each subnet gets a ▲/▼ strip across all 5 timeframes, plus the real move over its longest trend
+- it refreshes every minute and is posted silently
+- when new cards push it up, it moves itself back to the bottom
+- `TREND_BOARD_SECONDS` sets the refresh interval, and 0 turns it off
 
 **Cards.** There's one card per subnet and direction. If a longer timeframe confirms the
 trend within 12h, the same card is updated in place. A trend the other way is posted as
@@ -117,6 +130,38 @@ The candle size is printed on the chart.
 - a restart only fetches what's missing
 - trends already under way at startup are noted silently
 
+## News monitor (third channel)
+
+This channel watches every subnet channel on the Bittensor Discord, where the channel name
+`78 · umi` maps to SN78, and posts news to `NEWS_WEB_HOOK_URL`. Three kinds of post count:
+
+| | What |
+|---|---|
+| 📢 Announcement | a post that pings @everyone / @here |
+| 🐦 X post | a link to an x.com / twitter.com post (each tweet is reported once, even if it's shared in several channels) |
+| 📰 Team update | a post by the subnet's team or server staff that has a link or attachment, is long (≥120 chars), or uses announcement words like *release, launch, enrollment, mainnet, upgrade…* |
+
+Short replies and support chatter are skipped.
+
+**Who counts as "the team"** comes from Discord itself: the users and roles that the channel's
+permission overwrites give moderation rights. That's how subnet owners are set up in their own
+channels. Server-wide staff roles count too.
+
+**Each card shows:**
+- the subnet (with its logo), the author and their role
+- the full text, with links that open the original message
+- a native preview of the tweet or GitHub link
+- the **price at the post**
+- the **market reaction**, edited in at +5m, +15m and +1h
+
+**How messages arrive.** In real time over Discord's gateway. A light sweep every 20s acts as
+a safety net, and after a restart, posts from the last 30 minutes are caught up.
+
+**Account:** a separate alt account that's a member of the server. Its token goes in
+`NEWS_DISCORD_TOKEN`. Automating a user account breaks Discord's terms, so the alt is what's at
+risk, not your main account. To check the login and preview what would be posted:
+`.venv/bin/python -m snmon news-test 78` (add `--post` to send a TEST card).
+
 ## Run
 
 ```bash
@@ -149,5 +194,7 @@ snmon/meta.py      names/logos/liquidity, block events → trades (worker thread
 snmon/bars.py      5-minute OHLC bar store (numpy ring + SQLite), history backfill
 snmon/trend.py     trend fits, per-timeframe state machine, stories, trend cards
 snmon/chart.py     candlestick chart PNG for trend cards
+snmon/gateway.py   read-only Discord user client (REST + gateway) for the news monitor
+snmon/news.py      news classification, team detection, news cards, market reaction
 snmon/app.py       wiring, backfill, 24h reference, console UI
 ```

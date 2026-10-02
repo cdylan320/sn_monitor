@@ -22,6 +22,7 @@ downtrend, and its recovery as a 24h uptrend (+11%, R² 0.70).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -36,7 +37,7 @@ from .rpc import Rpc
 
 log = logging.getLogger("snmon.trend")
 
-DEFAULT_TIMEFRAMES = "12h:8:0.7,24h:10:0.65,3d:12:0.6"
+DEFAULT_TIMEFRAMES = "3h:5:0.85,6h:6:0.8,12h:8:0.7,24h:10:0.65,3d:12:0.6"
 EXIT_FRACTION = 0.5     # leave a trend when its % falls below half the entry threshold …
 EXIT_R2 = 0.4           # … or the fit's R² drops below this
 UP_COLOR, DOWN_COLOR = 0x16A34A, 0xDC2626
@@ -51,7 +52,12 @@ class Timeframe:
 
     @property
     def agg(self) -> int:
-        """Buckets per fitted point: 30-minute points up to a day, hourly beyond."""
+        """Buckets (5 min) per fitted point — ~24-72 points per window: 5-min points for 3h,
+        10-min for 6h, 30-min up to a day, hourly beyond."""
+        if self.hours <= 3:
+            return 1
+        if self.hours <= 6:
+            return 2
         return 6 if self.hours <= 24 else 12
 
     @property
@@ -64,12 +70,12 @@ class Timeframe:
 
     @property
     def point_label(self) -> str:
-        return "30-min" if self.agg == 6 else "1-hour"
+        return "1-hour" if self.agg == 12 else f"{self.agg * 5}-min"
 
     def chart_shape(self) -> tuple[int, int]:
         """(buckets per candle, candles) for the alert chart: ~3 windows of context, ≤6 days."""
         buckets = min(3 * self.hours, 144) * 12
-        for agg in (6, 12, 24, 48):
+        for agg in (1, 2, 3, 6, 12, 24, 48):
             if buckets // agg <= 96:
                 return agg, buckets // agg
         return 48, buckets // 48
@@ -154,6 +160,7 @@ class TrendMonitor:
         self.alerts = 0
         self.dry_run = False
         self.history: Rpc | None = None   # a node allowing state_queryStorage, for exact charts
+        self.board: TrendBoard | None = None
         self._last_block = 0
         self._exact_lock = asyncio.Lock()
 
@@ -222,6 +229,8 @@ class TrendMonitor:
             if self.dry_run:
                 return
             s.msg_id = await self.discord.send(payload, files={"trend.png": png})
+            if self.board is not None:
+                self.board.stale = True
         except Exception:
             log.exception("trend alert failed")
         finally:
@@ -288,28 +297,41 @@ class TrendMonitor:
         a, b, move = fmt.move(float(f.first[n]) * 1e9, float(f.last[n]) * 1e9)
         tfs_label = " + ".join(s.tfs) if len(s.tfs) > 1 else tf.name
 
-        prefix = {"reversal": "🔄 REVERSAL → ", "continues": ""}.get(s.kind, "")
+        # A short-term trend against a longer one still running is a pullback / bounce, not a reversal.
+        against = next((t for t in reversed(self.tfs)
+                        if t.hours > tf.hours and self.state[t.name][n] == -s.direction), None)
+        if against is not None:
+            g = self.fits[against.name]
+            big = fmt.move(float(g.first[n]) * 1e9, float(g.last[n]) * 1e9)[2]
+            other = "downtrend" if up else "uptrend"  # the longer trend runs the other way
+            prefix = "↘️ PULLBACK · " if not up else "↗️ BOUNCE · "
+            context = f" in a {against.name} {other.upper()}"
+            tail = f" · still {fmt.pct(big)} over {against.name}"
+        else:
+            prefix = {"reversal": "🔄 REVERSAL → ", "continues": ""}.get(s.kind, "")
+            context, tail = "", ""
         suffix = " CONTINUES" if s.kind == "continues" else ""
-        title = f"{prefix}{emoji} {word}{suffix} · {tfs_label}  ·  {fmt.pct(move)}"
+        title = f"{prefix}{emoji} {tfs_label} {word}{suffix}{context}  ·  {fmt.pct(move)}"
         name = f"SN{n} {info.name}".strip()
-        headline = (f"{prefix}{emoji} **{name}** {word}{suffix} {tf.name} **{fmt.pct(move)}** · "
-                    f"{a} → {b} τ · R² {r2:.2f}")
+        headline = (f"{prefix}{emoji} **{name}** {tf.name} {word}{suffix} **{fmt.pct(move)}**{context.lower()} · "
+                    f"{a} → {b} τ{tail}")
 
         per_hour = ((1 + fit / 100) ** (1 / tf.hours) - 1) * 100
         strength = "very strong" if r2 >= 0.85 else "strong" if r2 >= 0.75 else "clear" if r2 >= 0.6 else "weak"
         sign = "+" if up else "-"
-        rows = [f"{'':>4}  {'move':>10}  {'fit R²':>6}"]
+        rows = [f"{'window':>6}  {'change':>8}  {'steady':>6}  trend"]
         for t in self.tfs:
             g = self.fits.get(t.name)
             if g is None or not g.ok[n]:
-                rows.append(f"{t.name:>4}   not enough history yet")
+                rows.append(f"{t.name:>6}  not enough history yet")
                 continue
             st = self.state[t.name][n]
             mv = fmt.move(float(g.first[n]) * 1e9, float(g.last[n]) * 1e9)[2]
-            arrow = "▲" if mv > 0 else "▼"
-            mark = ("uptrend" if st > 0 else "downtrend") if st else "—"
+            mark = ("▲ up" if st > 0 else "▼ down") if st else "—"
             new = " ← new" if t.name == s.tfs[-1] else ""
-            rows.append(f"{t.name:>4}  {arrow} {fmt.pct(mv):>8}  {g.r2[n]:>6.2f}  {mark}{new}")
+            rows.append(f"{t.name:>6}  {fmt.pct(mv):>8}  {g.r2[n]:>6.2f}  {mark}{new}")
+        legend = ("change = real price move over that window (ago → now)\n"
+                  "steady = how straight the move was: 1.00 a clean line, under 0.40 choppy")
 
         embed = {
             "author": alerts._author(info),
@@ -320,16 +342,16 @@ class TrendMonitor:
             "fields": [
                 {"name": "Trend line (fit)", "value": f"**{fmt.pct(fit)}** over {tf.name}\n{fmt.pct(per_hour)} per hour",
                  "inline": True},
-                {"name": "Strength", "value": f"**{strength}**\nR² {r2:.2f}", "inline": True},
+                {"name": "Strength", "value": f"**{strength}**\nsteady {r2:.2f}", "inline": True},
                 {"name": "Pool liquidity", "value": f"**{fmt.tao_compact(info.pool_tao)}**" if info.pool_tao else "—",
                  "inline": True},
                 {"name": f"Range {tf.name}", "value": f"high {fmt.price(float(f.hi[n]) * 1e9)}\n"
                                                     f"low {fmt.price(float(f.lo[n]) * 1e9)}", "inline": True},
-                {"name": "Timeframes", "value": "```\n" + "\n".join(rows) + "\n```", "inline": False},
+                {"name": "Timeframes", "value": "```\n" + "\n".join(rows) + "\n```\n" + legend, "inline": False},
             ],
             "image": {"url": "attachment://trend.png"},
-            "footer": {"text": f"Move = real price {tf.name} ago → now · trend line = least-squares fit of "
-                               f"{tf.point_label} closes, R² = how closely price follows it · block #{block}"},
+            "footer": {"text": f"Trend line = best straight-line fit of {tf.point_label} closes over {tf.name} · "
+                               f"checked every block · block #{block}"},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         png = await asyncio.to_thread(self._chart, s, tf, info, move, block)
@@ -369,6 +391,133 @@ class TrendMonitor:
         a, b, move = fmt.move(float(f.first[n]) * 1e9, float(f.last[n]) * 1e9)
         return color(f"{'📈' if s.direction > 0 else '📉'} {word:<11} SN{n:<3} {info.name[:16]:<16} {tf.name:>3} "
                      f"{fmt.pct(move):>8}  {a} → {b} τ  (fit {fmt.pct(float(f.change[n]))}, R² {f.r2[n]:.2f})")
+
+
+BOARD_FILE = "trend_board.json"
+BOARD_ROWS = 30
+SILENT = 4096  # message flag: deliver without a push notification
+
+
+class TrendBoard:
+    """One live message listing every subnet that is trending right now, across all timeframes.
+
+    Refreshed every minute by editing it in place. Whenever trend cards have been posted below
+    it, it is re-posted (silently) so it always sits at the bottom of the channel."""
+
+    def __init__(self, monitor: "TrendMonitor", path, every: float = 60.0) -> None:
+        self.m = monitor
+        self.path = path
+        self.every = every
+        self.msg_id: str | None = None
+        self.stale = False  # a card was posted after the board
+        self.first_seen: dict[tuple[int, int], float] = {}  # (netuid, direction) → when it joined the board
+        self._initial = True  # what's on the board at startup isn't "new"
+
+    def payload(self) -> dict:
+        """Grouped and sorted by the MOST RECENT trend: a subnet's group (up/down) is the direction of
+        its shortest window in a trend — what the price is doing now; longer windows show the bigger
+        picture in the strip. Rows: aligned monospace span (arrows + the latest trend's real move), then
+        the subnet name linking to taomarketcap. 🆕 = joined in the last hour.
+        ⏳ Building: no window in a trend yet, but a steady move ≥70% of a window's bar."""
+        m, tfs = self.m, self.m.tfs
+        now = time.time()
+        names = " ".join(t.name for t in tfs)
+        groups: dict[int, list[tuple]] = {1: [], -1: []}
+        building: list[tuple] = []
+        on_board = set()
+        for n in range(1, len(m.state[tfs[0].name])):
+            if not m.watched(n):
+                continue
+            states = [int(m.state[t.name][n]) for t in tfs]
+            name = m.meta.info(n).name or ""
+            link = f"[SN{n} · {name}]({alerts.subnet_url(n)})" if name else f"[SN{n}]({alerts.subnet_url(n)})"
+            if any(states):
+                latest = min((i for i, st in enumerate(states) if st), key=lambda i: tfs[i].hours)
+                d, t = states[latest], tfs[latest]
+                g = m.fits.get(t.name)
+                if g is None or n >= len(g.ok) or not g.ok[n]:
+                    continue
+                mv = fmt.move(float(g.first[n]) * 1e9, float(g.last[n]) * 1e9)[2]
+                strip = " ".join(("▲" if st > 0 else "▼" if st < 0 else "·").ljust(len(tf.name))
+                                 for st, tf in zip(states, tfs))
+                on_board.add((n, d))
+                seen = self.first_seen.setdefault((n, d), 0.0 if self._initial else now)
+                new = "🆕 " if seen and now - seen < 3600 else ""
+                groups[d].append((t.hours, -abs(mv), f"`{strip}  {fmt.pct(mv):>8} {t.name:<3}` {new}{link}"))
+                continue
+            for i, t in enumerate(tfs):  # building: shortest window that's ≥70% of the way, steady, right shape
+                f = m.fits.get(t.name)
+                if f is None or n >= len(f.ok) or not f.ok[n]:
+                    continue
+                ch = float(f.change[n])
+                progress = abs(ch) / t.enter
+                if progress >= 0.7 and f.r2[n] >= t.r2 and int(f.shape[n]) == (1 if ch > 0 else -1):
+                    mv = fmt.move(float(f.first[n]) * 1e9, float(f.last[n]) * 1e9)[2]
+                    heading = "↗ UP" if ch > 0 else "↘ DOWN"
+                    building.append((0 if ch > 0 else 1, t.hours, -progress,
+                                     f"`{heading:<6}  {fmt.pct(mv):>8} {t.name:<3} {progress * 100:>4.0f}%` {link}"))
+                    break
+        self.first_seen = {k: v for k, v in self.first_seen.items() if k in on_board}
+        self._initial = False
+
+        def section(rows: list[tuple], header: str, budget: int) -> str:
+            lines, used = [header], len(header)
+            ordered = [r[-1] for r in sorted(rows, key=lambda r: r[:-1])]
+            for r in ordered:  # Discord caps all embeds in a message at 6000 chars
+                if used + len(r) + 1 > budget:
+                    break
+                lines.append(r)
+                used += len(r) + 1
+            if len(lines) - 1 < len(ordered):
+                lines.append(f"… +{len(ordered) - (len(lines) - 1)} more")
+            return "\n".join(lines)
+
+        trend_head = f"`{names}  latest trend`"
+        embeds = []
+        for d, title, color in ((1, "📈 Uptrends", UP_COLOR), (-1, "📉 Downtrends", DOWN_COLOR)):
+            embeds.append({"title": f"{title} now ({len(groups[d])})", "color": color,
+                           "description": section(groups[d], trend_head, 1900) if groups[d] else "none right now"})
+        embeds.append({"title": f"⏳ Almost trending ({len(building)}) — not a trend yet, but close",
+                       "color": 0x6B7280,
+                       "description": section(building, f"`{'heading':<6}  {'move':>8} {'in':<3} {'ready':>5}`", 1500)
+                       if building else "nothing close to a trend right now"})
+        ts = datetime.now(timezone.utc)
+        embeds[-1]["footer"] = {"text": "Up/down lists: grouped and sorted by the most recent window in a trend (3h "
+                                        "first) · latest trend = that window's real price change · 🆕 joined in the "
+                                        "last hour. Almost trending: heading UP or DOWN steadily · ready = how close "
+                                        "to becoming a trend (100% = it starts) · tap a name for taomarketcap"}
+        embeds[-1]["timestamp"] = ts.isoformat()
+        up, down = len(groups[1]), len(groups[-1])
+        return {"content": f"\u200b\n📊 **Trend board** — trending right now: **{up} up · {down} down** · "
+                           f"{len(building)} almost · updated <t:{int(ts.timestamp())}:R> · refreshes every minute",
+                "embeds": embeds, "allowed_mentions": {"parse": []}}
+
+    async def run(self) -> None:
+        try:
+            self.msg_id = json.loads(self.path.read_text()).get("msg_id")
+        except (OSError, ValueError):
+            self.msg_id = None
+        while True:
+            try:
+                if self.m.ready:
+                    await self._refresh()
+            except Exception:
+                log.exception("trend board refresh failed")
+            await asyncio.sleep(self.every)
+
+    async def _refresh(self) -> None:
+        d = self.m.discord
+        payload = self.payload()
+        if self.msg_id and not self.stale and await d.edit(self.msg_id, payload):
+            return
+        if self.msg_id:  # buried under new cards (or deleted): move it back to the bottom
+            await d.delete(self.msg_id)
+        self.msg_id = await d.send({**payload, "flags": SILENT})
+        self.stale = False
+        try:
+            self.path.write_text(json.dumps({"msg_id": self.msg_id}))
+        except OSError:
+            pass
 
 
 def _now() -> str:

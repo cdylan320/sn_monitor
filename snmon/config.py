@@ -100,6 +100,11 @@ class Config:
     trend_timeframes: str
     trend_story_hours: float
     trend_history_endpoint: str
+    trend_board_seconds: float
+    news_webhook_url: str
+    news_discord_token: str
+    news_guild: str
+    news_min_team_chars: int
 
     @property
     def max_window(self) -> int:
@@ -137,9 +142,14 @@ def load() -> Config:
         backfill_blocks=_int("BACKFILL_BLOCKS", max(300, max(w for w, _ in windows))),
         dry_run=_bool("DRY_RUN", False),
         trend_webhook_url=(os.getenv("TREND_WEB_HOOK_URL") or "").strip(),
-        trend_timeframes=(os.getenv("TREND_TIMEFRAMES") or "12h:8:0.7,24h:10:0.65,3d:12:0.6").strip(),
+        trend_timeframes=(os.getenv("TREND_TIMEFRAMES") or "3h:5:0.85,6h:6:0.8,12h:8:0.7,24h:10:0.65,3d:12:0.6").strip(),
         trend_story_hours=_float("TREND_STORY_HOURS", 12.0),
         # must allow state_queryStorage (every-block history for exact charts); public opentensor nodes don't
         trend_history_endpoint=(os.getenv("TREND_HISTORY_ENDPOINT")
                                 or "wss://bittensor-finney.api.onfinality.io/public-ws").strip(),
+        trend_board_seconds=_float("TREND_BOARD_SECONDS", 60.0),
+        news_webhook_url=(os.getenv("NEWS_WEB_HOOK_URL") or "").strip(),
+        news_discord_token=(os.getenv("NEWS_DISCORD_TOKEN") or "").strip().strip('"'),
+        news_guild=(os.getenv("NEWS_GUILD_ID") or "").strip(),
+        news_min_team_chars=_int("NEWS_MIN_TEAM_CHARS", 120),
     )

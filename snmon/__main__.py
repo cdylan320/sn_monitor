@@ -2,6 +2,8 @@
    python -m snmon test       post sample alerts to Discord (see exactly what alerts look like)
    python -m snmon replay N   dry-run detection over the last N blocks of real history (no Discord)
    python -m snmon trend-test [netuid]   post a sample trend card (strongest live trend, or that subnet)
+   python -m snmon news-test [netuid] [--post]   check the Discord login, show what counts as news in that
+                                                 subnet's channel (default 78); --post sends the newest as TEST
 """
 from __future__ import annotations
 
@@ -154,6 +156,75 @@ async def _trend_test(netuid: int | None) -> None:
         await r.stop()
 
 
+async def _capture(sent: list, payload: dict):
+    sent.append(payload)
+    return None
+
+
+async def _news_test(netuid: int, post: bool) -> None:
+    from .discord import Discord
+    from .meta import Meta
+    from .news import NewsMonitor
+
+    cfg = config.load()
+    if not cfg.news_discord_token:
+        raise SystemExit("NEWS_DISCORD_TOKEN is not set in .env")
+    meta = Meta(cfg.endpoints[0])
+    await meta.refresh()
+    d = Discord(cfg.news_webhook_url)
+    await d.start()
+    rpc = Rpc(cfg.endpoints[0])
+    rpc.start()
+    await rpc.wait_up(10)
+    prices = decode_prices(bytes.fromhex((await rpc.call("state_call", [PRICE_ALL, "0x"]))[2:]))
+    await rpc.stop()
+    nm = NewsMonitor(cfg.news_discord_token, d, meta, price_now=prices.get, change=lambda n, b: None,
+                     guild_hint=cfg.news_guild, min_team_chars=cfg.news_min_team_chars)
+    await nm.client.start()
+    from datetime import datetime, timezone
+    created = datetime.fromtimestamp(((int(nm.client.user["id"]) >> 22) + 1420070400000) / 1000, timezone.utc)
+    print(f"logged in as {nm.client.user.get('username')} ✓ (account created {created:%Y-%m-%d})")
+    await nm.load_structure()
+    subnet_chans = [c for c in nm.channels.values() if c.netuid is not None]
+    print(f"server: {nm.guild_name} · {len(subnet_chans)} subnet channels · "
+          f"{sum(1 for c in subnet_chans if c.team_users or c.team_roles)} with a team detected")
+    print("staff roles:", ", ".join(sorted(nm.roles[r] for r in nm.staff_roles)) or "none")
+    ch = next((c for c in subnet_chans if c.netuid == netuid), None)
+    if ch is None:
+        raise SystemExit(f"no channel found for SN{netuid}")
+    print(f"\n#{ch.name}: team users {len(ch.team_users)}, team roles "
+          f"{[nm.roles.get(r, r) for r in ch.team_roles]}")
+    msgs = await nm.client.get(f"/channels/{ch.id}/messages", limit=100)
+    news = []
+    for m in sorted(msgs, key=lambda m: int(m["id"])):
+        m.setdefault("guild_id", nm.guild_id)
+        await nm._ensure_roles(m)
+        v = nm.classify(m, ch)
+        nm._remember(m, ch)
+        if v:
+            news.append((m, v))
+            who = m["author"].get("global_name") or m["author"]["username"]
+            text = (m.get("content") or "").replace("\n", " ")[:90]
+            print(f"  NEWS {v[0]:<12} {m['timestamp'][:16]}  {who} ({v[1] or 'community'}): {text}")
+    print(f"→ {len(news)} of the last {len(msgs)} messages would be posted"
+          + ("" if not nm._member_lookup_off else " (member roles via gateway only)"))
+    if post and news:
+        newest = {}
+        for m, (kind, who) in news:
+            newest[kind] = (m, who)
+        sent = []
+        nm.discord = type("Capture", (), {"send": staticmethod(lambda p: _capture(sent, p))})()
+        for kind, (m, who) in newest.items():  # newest of each kind, through the real posting path
+            if "--only-x" in sys.argv and kind != "x_post":
+                continue
+            await nm._post(m, ch, kind, who)
+        for payload in sent:
+            payload["content"] = payload["content"].replace("\u200b\n", "\u200b\n🧪 **TEST — sample news card**\n", 1)
+            print("posted", await d.send(payload))
+    await nm.client.close()
+    await d.close()
+
+
 async def _replay(n: int) -> None:
     """Run the detector over real history and print what would have alerted."""
     from .meta import Meta
@@ -207,6 +278,9 @@ def main() -> None:
             _go(_test())
         elif cmd == "trend-test":
             _go(_trend_test(int(sys.argv[2]) if len(sys.argv) > 2 else None))
+        elif cmd == "news-test":
+            args = [a for a in sys.argv[2:] if not a.startswith("--")]
+            _go(_news_test(int(args[0]) if args else 78, "--post" in sys.argv))
         elif cmd == "replay":
             _go(_replay(int(sys.argv[2]) if len(sys.argv) > 2 else 900))
         else:
