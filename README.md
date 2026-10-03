@@ -70,13 +70,17 @@ subnet that slides 15% over two days with bounces along the way. It posts to
 **How a trend is measured.** On every block, every subnet is fitted with a log-linear trend
 line over each timeframe. All subnets are done in one numpy pass, taking about 3–5 ms.
 
-| Timeframe | Fitted on | A trend starts when |
-|---|---|---|
-| 3h  | 5-min closes  | trend line moves ≥5% and steadiness (R²) ≥ 0.85 |
-| 6h  | 10-min closes | ≥6% and R² ≥ 0.80 |
-| 12h | 30-min closes | ≥8% and R² ≥ 0.70 |
-| 24h | 30-min closes | ≥10% and R² ≥ 0.65 |
-| 3d  | 1-hour closes | ≥12% and R² ≥ 0.60 |
+| Window | Fitted on | On the trend board when the line moves | Card posted when it moves |
+|---|---|---|---|
+| 1h  | 5-min closes  | ≥2%, steadiness (R²) ≥ 0.85 | ≥4%, R² ≥ 0.90 |
+| 3h  | 5-min closes  | ≥3.5%, R² ≥ 0.80 | ≥5%, R² ≥ 0.85 |
+| 6h  | 10-min closes | ≥6%, R² ≥ 0.80 | same |
+| 12h | 30-min closes | ≥8%, R² ≥ 0.70 | same |
+| 24h | 30-min closes | ≥10%, R² ≥ 0.65 | same |
+| 3d  | 1-hour closes | ≥12%, R² ≥ 0.60 | same |
+
+The short windows show on the board earlier than they post a card. That way the board shows what's
+moving right now, while the channel only gets cards for the bigger short-term moves.
 
 - **R²** measures how cleanly price follows the line, so a single spike doesn't count as a trend.
 - **Shape check:** the window's three thirds must step in the same direction, which rejects V and Λ shapes.

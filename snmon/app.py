@@ -382,7 +382,8 @@ class App:
             self.trend.board = TrendBoard(self.trend, ROOT / "data" / "trend_board.json", self.cfg.trend_board_seconds)
             asyncio.create_task(self.trend.board.run())
         if self.cfg.startup_message and not self.cfg.dry_run and not self._recent_start("last_start_trend"):
-            tfs = " · ".join(f"**{tf.name}** ≥{tf.enter:g}% (R² ≥ {tf.r2:g})" for tf in self.trend.tfs)
+            tfs = " · ".join(f"**{tf.name}** ≥{tf.enter:g}%" + (f" (card at ≥{tf.card_enter:g}%)" if tf.split else "")
+                             for tf in self.trend.tfs)
             await self.trend_discord.send({"embeds": [{
                 "title": "🟢 Trend monitor is live",
                 "description": (f"Watching the trend of **{max(ok.values())} subnets**, refitted on every block. "
@@ -402,11 +403,14 @@ class App:
         except Exception as e:
             log.error("news monitor could not start: %s", e)
             return
+        if self.cfg.news_x_accounts:
+            asyncio.create_task(self.news.x_loop(self.cfg.news_x_accounts, self.cfg.news_x_poll_seconds))
         n = sum(1 for c in self.news.channels.values() if c.netuid is not None)
         teams = sum(1 for c in self.news.channels.values() if c.team_users or c.team_roles)
         print(fmt.dim(f"{now_str()} ── news monitor live in {self.news.guild_name} as "
                       f"{(self.news.client.user or {}).get('username')} · {n} subnet channels "
-                      f"({teams} with a team detected) · {len(self.news.staff_roles)} staff roles"))
+                      f"({teams} with a team detected) · {len(self.news.staff_roles)} staff roles · X: "
+                      + ", ".join("@" + h for h in self.cfg.news_x_accounts)))
         if self.cfg.startup_message and not self.cfg.dry_run and not self._recent_start("last_start_news"):
             await self.news_discord.send({"embeds": [{
                 "title": "🟢 News monitor is live",
@@ -555,7 +559,8 @@ class App:
                           + (f" · trends {self.trend.alerts}" if self.trend else "")
                           + (f" · news {self.news.posted} (gateway msgs {self.news.stats.get('MESSAGE_CREATE', 0)}, "
                              f"passive {self.news.stats.get('PASSIVE_UPDATE_V1', 0) + self.news.stats.get('PASSIVE_UPDATE_V2', 0)}"
-                             f", sweep {self.news.stats.get('sweep', 0)})" if self.news else "")))
+                             f", sweep {self.news.stats.get('sweep', 0)}, X checks {self.news.stats.get('x_polls', 0)} ok / {self.news.stats.get('x_fail', 0)} failed)"
+                             if self.news else "")))
 
     async def _startup_message(self) -> None:
         if self._recent_start("last_start"):
@@ -594,8 +599,7 @@ class App:
                                            if c.mempool else "off"))
         if c.trend_webhook_url:
             tfs = parse_timeframes(c.trend_timeframes)
-            print(f"  {fmt.dim('trend')}      " + "  ·  ".join(f"{t.name} ≥{t.enter:g}% R²≥{t.r2:g}" for t in tfs)
-                  + "  → trend webhook")
+            print(f"  {fmt.dim('trend')}      " + "  ·  ".join(t.describe() for t in tfs) + "  → trend webhook")
         if c.news_webhook_url:
             print(f"  {fmt.dim('news')}       " + ("Bittensor Discord subnet channels → news webhook"
                                                   if c.news_discord_token else "waiting for NEWS_DISCORD_TOKEN in .env"))

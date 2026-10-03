@@ -123,6 +123,7 @@ class NewsMonitor:
         self._x_seen: dict[str, float] = {}
         self._fetching: set[str] = set()
         self._member_lookup_off = False
+        self._x_ids: dict[str, list[str]] = {}  # X handle → tweet ids already seen
         self._recent: dict[str, list[tuple[float, str, bool]]] = {}  # channel → (time, author, asked a question)
         self.stats: dict[str, int] = {}
         self.posted = 0
@@ -484,14 +485,19 @@ class NewsMonitor:
             else:  # fall back to a link Discord can preview
                 lines.append(f"https://fxtwitter.com/{x.group(1)}/status/{x.group(2)}")
             payload["content"] = "\n".join(lines)
-        head = payload["content"].strip().splitlines()[0]
+        await self._send(payload, ch.netuid, p0)
+
+    async def _send(self, payload: dict, netuid: int | None, p0: int | None) -> None:
+        head = next((ln for ln in payload["content"].replace("\u200b", "").splitlines() if ln.strip()), "")
         print(fmt.byellow(f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]} {head[:160]}"))
         self.posted += 1
         if self.dry_run:
             return
         msg_id = await self.discord.send(payload)
+        print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]}    ↳ news card posted (message {msg_id})")
+              if msg_id else fmt.red("    ↳ news card failed to post"))
         if msg_id and p0:
-            asyncio.create_task(self._reaction(Card(ch.netuid, msg_id, payload, p0, time.time())))
+            asyncio.create_task(self._reaction(Card(netuid, msg_id, payload, p0, time.time())))
 
     async def _reaction(self, card: Card) -> None:
         """Edit the card at +5m / +15m / +1h with how the price moved since the post."""
@@ -508,6 +514,126 @@ class NewsMonitor:
             emb["fields"] = [f for f in emb["fields"] if f["name"] != "Market reaction"] + [field]
             self.discord.edit_later(card.msg_id, {"embeds": card.payload["embeds"]})
 
+    # ── X accounts (e.g. const, Bittensor's founder) ─────────────────────
+
+    async def x_loop(self, handles: list[str], every: float = 20.0) -> None:
+        """Watch X accounts directly via fxtwitter's public timeline API (X's own API is paid).
+        New posts, reposts, replies and quotes become news cards. The first look at an account only
+        records what's already there, so a restart never re-posts old tweets.
+
+        "New" is decided by POSITION, not by date: an unseen item that sits above an item we already
+        know is new activity. (The API gives a repost the ORIGINAL tweet's date — const reposting a
+        4-day-old tweet today is news today. An unseen item below everything we know is just an older
+        tweet scrolling into view, and is ignored.)"""
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8),
+                                         headers={"User-Agent": "Mozilla/5.0 sn-monitor"}) as session:
+            while True:
+                for h in handles:
+                    try:
+                        async with session.get(f"https://api.fxtwitter.com/2/profile/{h}/statuses") as r:
+                            items = (await r.json(content_type=None)).get("results") or [] if r.status == 200 else None
+                    except Exception as e:
+                        log.debug("X timeline @%s failed: %s", h, e)
+                        items = None
+                    if items is None:
+                        self.stats["x_fail"] = self.stats.get("x_fail", 0) + 1
+                        continue
+                    self.stats["x_polls"] = self.stats.get("x_polls", 0) + 1
+                    seen = self._x_ids.setdefault(h.lower(), [])
+                    fresh = [str(t.get("id")) for t in items if str(t.get("id")) not in seen]
+                    if seen:  # not the first look at this account
+                        for t in x_new(items, set(seen)):
+                            try:
+                                await self._post_x(t, h)
+                            except Exception:
+                                log.exception("X card for @%s failed", h)
+                    seen.extend(fresh)
+                    del seen[:-300]
+                    if fresh:
+                        self._save_state()
+                await asyncio.sleep(every)
+
+    def _x_subnet(self, t: dict) -> int | None:
+        """Which subnet a tweet is about: 'SN81' / 'subnet 81', or an @handle containing a subnet's name."""
+        text = (t.get("text") or "") + " " + ((t.get("quote") or {}).get("text") or "")
+        m = re.search(r"\b(?:sn|subnet)\s?#?(\d{1,3})\b", text, re.I)
+        if m and int(m.group(1)) in self.meta.subnets:
+            return int(m.group(1))
+        handles = {(t.get("author") or {}).get("screen_name", "").lower()}
+        handles |= {x.lower() for x in re.findall(r"@(\w+)", text)}
+        handles |= {((t.get("quote") or {}).get("author") or {}).get("screen_name", "").lower()}
+        for n, info in self.meta.subnets.items():
+            name = re.sub(r"[^a-z0-9]", "", (info.name or "").lower())
+            if n and len(name) >= 4 and any(name in h for h in handles if h):
+                return n
+        return None
+
+    async def _post_x(self, t: dict, handle: str) -> None:
+        a = t.get("author") or {}
+        rb = t.get("reposted_by") or {}
+        me = rb if rb else a
+        who = f"{me.get('name') or handle} (@{me.get('screen_name') or handle})"
+        if rb:
+            kind, emoji = f"reposted @{a.get('screen_name', '')}", "🔁"
+        elif t.get("replying_to"):
+            rt = t["replying_to"]
+            to = (rt.get("screen_name") if isinstance(rt, dict) else str(rt)) or ""
+            if to.lower() == (me.get("screen_name") or handle).lower():
+                kind, emoji = "continued his thread", "🧵"
+            else:
+                kind, emoji = f"replied to @{to}", "💬"
+        elif t.get("quote"):
+            kind, emoji = f"quoted @{(t['quote'].get('author') or {}).get('screen_name', '')}", "🗨️"
+        else:
+            kind, emoji = "posted", "🐦"
+        text = (t.get("text") or "").strip()
+        quote = t.get("quote") or {}
+        desc = text[:1700]
+        if quote.get("text"):
+            desc += "\n\n> " + quote["text"].replace("\n", "\n> ")[:500]
+        n = self._x_subnet(t)
+        info = self.meta.info(n) if n is not None else None
+        p0 = self.price_now(n) if n is not None else None
+        sub = f" · **SN{n} {info.name}**" if info else ""
+        preview = text.replace("\n", " ")
+        preview = preview if len(preview) <= 140 else preview[:137].rstrip() + "…"
+        fields = []
+        if info:
+            fields.append({"name": "Subnet", "value": f"[SN{n} · {info.name}]({alerts.subnet_url(n)})", "inline": True})
+        if p0:
+            ch1h = self.change(n, 300)
+            fields.append({"name": "Price at post", "value": f"**{fmt.price(p0)} τ**"
+                           + (f"\n1h {fmt.pct(ch1h)}" if ch1h is not None else ""), "inline": True})
+        embed = {
+            "author": {"name": who, "url": f"https://x.com/{me.get('screen_name') or handle}",
+                       "icon_url": me.get("avatar_url") or a.get("avatar_url")},
+            "title": f"{emoji} {me.get('name') or handle} {kind}",
+            "url": t.get("url"),
+            "description": desc or "*(media)*",
+            "color": COLOR[XPOST],
+            "fields": fields,
+            "footer": {"text": f"X · ♥ {t.get('likes', 0)} · ⟲ {t.get('reposts', 0)} · 💬 {t.get('replies', 0)}"},
+        }
+        photos = (t.get("media") or {}).get("photos") or []
+        if photos:
+            embed["image"] = {"url": photos[0].get("url")}
+        created = (datetime.fromtimestamp(t["created_timestamp"], timezone.utc)
+                   if t.get("created_timestamp") else None)
+        if rb:
+            # the API dates a repost by the original tweet — stamp the card with when we saw the repost
+            embed["timestamp"] = datetime.now(timezone.utc).isoformat()
+            if a.get("screen_name"):
+                when = f"\nposted {created:%b %-d}" if created else ""
+                embed["fields"].insert(0, {"name": "Original by", "inline": True,
+                                           "value": f"{a.get('name')} (@{a['screen_name']}){when}"})
+        elif created:
+            embed["timestamp"] = created.isoformat()
+        self._x_seen[str(t.get("id"))] = time.time()  # a Discord share of the same tweet won't repeat it
+        payload = {"content": alerts.content([f"{emoji} **{me.get('name') or handle}** (@{me.get('screen_name') or handle}) "
+                                              f"{kind}{sub}: {preview}"]),
+                   "embeds": [embed], "allowed_mentions": {"parse": []}}
+        await self._send(payload, n, p0)
+
     # ── persistence ──────────────────────────────────────────────────────
 
     def _restore_state(self) -> None:
@@ -519,13 +645,32 @@ class NewsMonitor:
             if cid in self.channels:
                 self.channels[cid].last_id = max(int(last), 0) or self.channels[cid].last_id
         self._x_seen = {k: v for k, v in state.get("x", {}).items() if time.time() - v < 12 * 3600}
+        self._x_ids = state.get("x_ids", {})
 
     def _save_state(self) -> None:
         try:
             STATE_FILE.write_text(json.dumps({"last": {c.id: c.last_id for c in self.channels.values()},
-                                              "x": self._x_seen}))
+                                              "x": self._x_seen, "x_ids": self._x_ids}))
         except OSError:
             pass
+
+
+def x_new(items: list[dict], known: set[str], now: float | None = None) -> list[dict]:
+    """Timeline items that are new activity, oldest first. `items` is newest-first as the API returns it.
+    New = unseen AND above an item we already know. His own tweets must also be under a day old (they
+    carry their real date); reposts carry the original's date, so they are judged by position alone."""
+    now = now or time.time()
+    ids = [str(t.get("id")) for t in items]
+    lowest_known = max((i for i, tid in enumerate(ids) if tid in known), default=-1)
+    out = []
+    for i in range(len(items) - 1, -1, -1):
+        t = items[i]
+        if ids[i] in known or i > lowest_known:
+            continue
+        if not t.get("reposted_by") and now - (t.get("created_timestamp") or now) > 86400:
+            continue
+        out.append(t)
+    return out
 
 
 def _ts(m: dict) -> float:

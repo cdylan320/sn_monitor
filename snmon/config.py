@@ -105,6 +105,8 @@ class Config:
     news_discord_token: str
     news_guild: str
     news_min_team_chars: int
+    news_x_accounts: list[str]
+    news_x_poll_seconds: float
 
     @property
     def max_window(self) -> int:
@@ -142,7 +144,7 @@ def load() -> Config:
         backfill_blocks=_int("BACKFILL_BLOCKS", max(300, max(w for w, _ in windows))),
         dry_run=_bool("DRY_RUN", False),
         trend_webhook_url=(os.getenv("TREND_WEB_HOOK_URL") or "").strip(),
-        trend_timeframes=(os.getenv("TREND_TIMEFRAMES") or "3h:5:0.85,6h:6:0.8,12h:8:0.7,24h:10:0.65,3d:12:0.6").strip(),
+        trend_timeframes=(os.getenv("TREND_TIMEFRAMES") or "1h:2:0.85:4:0.9,3h:3.5:0.8:5:0.85,6h:6:0.8,12h:8:0.7,24h:10:0.65,3d:12:0.6").strip(),
         trend_story_hours=_float("TREND_STORY_HOURS", 12.0),
         # must allow state_queryStorage (every-block history for exact charts); public opentensor nodes don't
         trend_history_endpoint=(os.getenv("TREND_HISTORY_ENDPOINT")
@@ -152,4 +154,6 @@ def load() -> Config:
         news_discord_token=(os.getenv("NEWS_DISCORD_TOKEN") or "").strip().strip('"'),
         news_guild=(os.getenv("NEWS_GUILD_ID") or "").strip(),
         news_min_team_chars=_int("NEWS_MIN_TEAM_CHARS", 120),
+        news_x_accounts=[h.lstrip("@") for h in _list("NEWS_X_ACCOUNTS", ("const_reborn",))],
+        news_x_poll_seconds=_float("NEWS_X_POLL_SECONDS", 20.0),
     )

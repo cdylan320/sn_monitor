@@ -37,7 +37,7 @@ from .rpc import Rpc
 
 log = logging.getLogger("snmon.trend")
 
-DEFAULT_TIMEFRAMES = "3h:5:0.85,6h:6:0.8,12h:8:0.7,24h:10:0.65,3d:12:0.6"
+DEFAULT_TIMEFRAMES = "1h:2:0.85:4:0.9,3h:3.5:0.8:5:0.85,6h:6:0.8,12h:8:0.7,24h:10:0.65,3d:12:0.6"
 EXIT_FRACTION = 0.5     # leave a trend when its % falls below half the entry threshold …
 EXIT_R2 = 0.4           # … or the fit's R² drops below this
 UP_COLOR, DOWN_COLOR = 0x16A34A, 0xDC2626
@@ -47,13 +47,30 @@ UP_COLOR, DOWN_COLOR = 0x16A34A, 0xDC2626
 class Timeframe:
     name: str
     hours: int
-    enter: float   # minimum fitted % move
-    r2: float      # minimum R²
+    enter: float   # minimum fitted % move to be ON (board)
+    r2: float      # minimum R² to be ON (board)
+    card_enter: float = 0.0  # minimum fitted % move to post a card (0 = same as the board bar)
+    card_r2: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not self.card_enter:
+            object.__setattr__(self, "card_enter", self.enter)
+        if not self.card_r2:
+            object.__setattr__(self, "card_r2", self.r2)
+
+    @property
+    def split(self) -> bool:
+        """True if cards need more than the board (short windows)."""
+        return (self.card_enter, self.card_r2) != (self.enter, self.r2)
+
+    def describe(self) -> str:
+        board = f"{self.name} ≥{self.enter:g}% R²≥{self.r2:g}"
+        return board + (f" (card ≥{self.card_enter:g}% R²≥{self.card_r2:g})" if self.split else "")
 
     @property
     def agg(self) -> int:
-        """Buckets (5 min) per fitted point — ~24-72 points per window: 5-min points for 3h,
-        10-min for 6h, 30-min up to a day, hourly beyond."""
+        """Buckets (5 min) per fitted point: 5-min points up to 3h (1h → 12 points, so its steadiness
+        bar is high), 10-min for 6h, 30-min up to a day, hourly beyond."""
         if self.hours <= 3:
             return 1
         if self.hours <= 6:
@@ -86,9 +103,11 @@ def parse_timeframes(raw: str) -> list[Timeframe]:
     for part in raw.replace(" ", "").split(","):
         if not part:
             continue
-        name, enter, r2 = part.split(":")
+        # name:board%:boardR²[:card%:cardR²] — short windows can show on the board before they post a card
+        name, enter, r2, *card = part.split(":")
         hours = int(name[:-1]) * (24 if name.endswith("d") else 1)
-        out.append(Timeframe(name, hours, float(enter), float(r2)))
+        ce, cr = (float(card[0]), float(card[1])) if len(card) == 2 else (0.0, 0.0)
+        out.append(Timeframe(name, hours, float(enter), float(r2), ce, cr))
     return sorted(out, key=lambda t: t.hours)
 
 
@@ -153,6 +172,8 @@ class TrendMonitor:
         self.watched = watched
         self.story_blocks = int(story_hours * 3600 / BLOCK_SECONDS)
         self.state = {tf.name: np.zeros(NMAX, dtype=np.int8) for tf in timeframes}
+        # direction already announced with a card in the current trend episode (0 = not yet)
+        self.carded = {tf.name: np.zeros(NMAX, dtype=np.int8) for tf in timeframes}
         self.last_enter = {(tf.name, d): np.full(NMAX, -10**9, dtype=np.int64) for tf in timeframes for d in (1, -1)}
         self.fits: dict[str, Fit] = {}
         self.stories: dict[int, Story] = {}
@@ -182,9 +203,16 @@ class TrendMonitor:
             target = np.where(up, 1, np.where(dn, -1, 0)).astype(np.int8)
             leave = (st != 0) & (~f.ok | (st * f.change < tf.enter * EXIT_FRACTION) | (f.r2 < EXIT_R2))
             st[leave] = 0
-            for n in np.nonzero((target != 0) & (target != st))[0]:
-                d = int(target[n])
-                st[n] = d
+            flip = (target != 0) & (target != st)
+            st[flip] = target[flip]
+            # A card goes out once per trend episode, when the trend also clears the card bar (for long
+            # windows that's the same moment it turns on; short windows show on the board first).
+            carded = self.carded[tf.name][:w]
+            carded[carded != st] = 0
+            card = (st != 0) & f.ok & (st * f.change >= tf.card_enter) & (f.r2 >= tf.card_r2) & (f.shape == st)
+            for n in np.nonzero(card & (carded == 0))[0]:
+                d = int(st[n])
+                carded[n] = d
                 le = self.last_enter[(tf.name, d)]
                 cooled = block - le[n] >= tf.blocks // 2
                 le[n] = block
@@ -199,6 +227,7 @@ class TrendMonitor:
     def reset(self, netuid: int) -> None:
         for tf in self.tfs:
             self.state[tf.name][netuid] = 0
+            self.carded[tf.name][netuid] = 0
         self.stories.pop(netuid, None)
 
     # ── stories → Discord ────────────────────────────────────────────────

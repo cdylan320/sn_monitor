@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from snmon.news import ANNOUNCE, TEAM, XPOST, Channel, NewsMonitor  # noqa: E402
+from snmon.news import ANNOUNCE, TEAM, XPOST, Channel, NewsMonitor, x_new  # noqa: E402
 
 
 class _Meta:
@@ -124,6 +124,32 @@ def test_card_layout():
     assert e["url"] == "https://discord.com/channels/G/C78/100"
     assert "@helios" in e["description"] and p0 == 3_340_000
     assert [f["name"] for f in e["fields"]] == ["Posted by", "Channel", "Price at post", "Links"]
+
+
+NOW = 1_800_000_000
+
+
+def _tw(i, age_h, repost=False):
+    t = {"id": str(i), "created_timestamp": NOW - age_h * 3600}
+    if repost:
+        t["reposted_by"] = {"screen_name": "const_reborn"}
+    return t
+
+
+def test_x_repost_of_an_old_tweet_is_news():
+    # 2026-10-03: const reposted a tweet written 4 days earlier; the API dates it by the original
+    timeline = [_tw(9, 98.8, repost=True), _tw(8, 18), _tw(7, 21), _tw(6, 43)]
+    assert [t["id"] for t in x_new(timeline, {"8", "7", "6"}, NOW)] == ["9"]
+
+
+def test_x_older_tweets_scrolling_into_view_are_not_news():
+    timeline = [_tw(8, 18), _tw(7, 21), _tw(6, 43), _tw(5, 70, repost=True), _tw(4, 90)]
+    assert x_new(timeline, {"8", "7", "6"}, NOW) == []
+
+
+def test_x_new_items_come_oldest_first_and_stale_own_posts_are_skipped():
+    timeline = [_tw(12, 0.1), _tw(11, 0.5, repost=True), _tw(10, 30), _tw(8, 40)]
+    assert [t["id"] for t in x_new(timeline, {"8"}, NOW)] == ["11", "12"]   # 10 is his own, 30h old
 
 
 if __name__ == "__main__":
