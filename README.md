@@ -94,6 +94,39 @@ about 20–25 cards/day across ~129 subnets. SN80's late-September slide registe
 running, the card says so instead of calling it a reversal. Example: `↘️ PULLBACK · 12h DOWNTREND
 in a 3d UPTREND · still +4.17% over 3d`.
 
+**Reversal signals ("dump → pump starting").** A signal fires when the **1h window turns up
+after a drop of ≥5% from the 24h high**, at most once per subnet every 12 hours. This rule was chosen
+by backtest on 8 days of 5-minute prices for every subnet (2026-10-05), not by intuition:
+
+| Entry rule | Signals/day | Up after 24h | Median after 24h |
+|---|---|---|---|
+| Buy at random | — | 39% | ~0% (mean +0.3%) |
+| 1h turns up, no dump before | 11 | 51% | (mean +1.4%) |
+| **1h turns up after a ≥5% dump, 12h spacing (the signal)** | **~4** | **~63–66%** | **+2.3%** (mean +3.4%) |
+| Waiting for the 3h window to confirm | 17 | 42% | (mean −0.7%) |
+
+It's an edge, not a guarantee:
+- About 4 signals in 10 lose.
+- The typical dip along the way is −3%; the worst was −7% and the best +25%.
+- The sample is one week.
+
+So every signal card carries:
+- **Entry**, the **invalidation level** (the dump's low) and the **previous high**.
+- **Cost to buy** for 10/50/100 τ (slippage + fee, from the chain's swap simulator). On a τ1.5K pool, a 100 τ buy costs ~6–7%, more than the edge.
+- **Pool size**, the last hour's **buy/sell flow** and the state of every **trend window**.
+- A **chart** with the levels marked.
+- The **track record**: the backtest (re-run on stored history every 6 hours) and the live record of signals actually posted.
+
+The board also shows a **👀 Watching** list under the signals: subnets that have dumped ≥5% from
+their 24h high, haven't turned up yet, and haven't signalled in the last 12 hours. The closest to a
+signal come first. `ready` is the weakest of the three things a signal needs (the 1h trend line's
+move, its steadiness, and rising through the hour), so 100% means the signal fires.
+
+Each signal is then tracked for 24 hours. The card is edited with the result at +1h, +6h and +24h,
+and if the price closes below the invalidation level. The board lists the last 24 hours of signals,
+each with its % since entry. `TREND_SIGNALS=false` turns signals off, and `TREND_SIGNAL_DUMP_PCT`
+sets the dump size.
+
 **Live trend board.** One message always sits at the bottom of the trend channel, listing every
 subnet that's trending right now:
 - each subnet gets a ▲/▼ strip across all 5 timeframes, plus the real move over its longest trend
@@ -197,7 +230,8 @@ snmon/mempool.py   pending-trade decoding + exact impact prediction
 snmon/meta.py      names/logos/liquidity, block events → trades (worker thread)
 snmon/bars.py      5-minute OHLC bar store (numpy ring + SQLite), history backfill
 snmon/trend.py     trend fits, per-timeframe state machine, stories, trend cards
-snmon/chart.py     candlestick chart PNG for trend cards
+snmon/signals.py   reversal signals: rule, cards, 24h outcome tracking, built-in backtest
+snmon/chart.py     candlestick chart PNG for trend and signal cards
 snmon/gateway.py   read-only Discord user client (REST + gateway) for the news monitor
 snmon/news.py      news classification, team detection, news cards, market reaction
 snmon/app.py       wiring, backfill, 24h reference, console UI

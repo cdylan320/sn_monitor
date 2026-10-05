@@ -525,33 +525,50 @@ class NewsMonitor:
         know is new activity. (The API gives a repost the ORIGINAL tweet's date — const reposting a
         4-day-old tweet today is news today. An unseen item below everything we know is just an older
         tweet scrolling into view, and is ignored.)"""
+        base = "https://api.fxtwitter.com/2/profile/{}/statuses"
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8),
                                          headers={"User-Agent": "Mozilla/5.0 sn-monitor"}) as session:
+
+            async def fetch(url: str) -> list | None:
+                try:
+                    async with session.get(url) as r:
+                        return ((await r.json(content_type=None)).get("results") or []) if r.status == 200 else None
+                except Exception as e:
+                    log.debug("X timeline failed: %s", e)
+                    return None
+
             while True:
+                failed = False
                 for h in handles:
-                    try:
-                        async with session.get(f"https://api.fxtwitter.com/2/profile/{h}/statuses") as r:
-                            items = (await r.json(content_type=None)).get("results") or [] if r.status == 200 else None
-                    except Exception as e:
-                        log.debug("X timeline @%s failed: %s", h, e)
-                        items = None
+                    # with_replies=true is the complete timeline (posts, quotes, replies, reposts). The plain
+                    # one silently omits replies to others AND some of his own quote-posts, so it is only the
+                    # fallback when a request fails (the service returns a 404 on ~1 request in 7).
+                    items = await fetch(base.format(h) + "?with_replies=true")
+                    if items is None:
+                        items = await fetch(base.format(h))
                     if items is None:
                         self.stats["x_fail"] = self.stats.get("x_fail", 0) + 1
+                        failed = True
                         continue
                     self.stats["x_polls"] = self.stats.get("x_polls", 0) + 1
                     seen = self._x_ids.setdefault(h.lower(), [])
                     fresh = [str(t.get("id")) for t in items if str(t.get("id")) not in seen]
                     if seen:  # not the first look at this account
+                        by_id = {str(t.get("id")): t for t in items}
                         for t in x_new(items, set(seen)):
+                            if not x_by(t, h):
+                                continue  # someone else's tweet, listed only as context for his reply
+                            parent = t.get("replying_to")
+                            parent = by_id.get(str(parent.get("status"))) if isinstance(parent, dict) else None
                             try:
-                                await self._post_x(t, h)
+                                await self._post_x(t, h, parent)
                             except Exception:
                                 log.exception("X card for @%s failed", h)
                     seen.extend(fresh)
-                    del seen[:-300]
+                    del seen[:-400]
                     if fresh:
                         self._save_state()
-                await asyncio.sleep(every)
+                await asyncio.sleep(5 if failed else every)
 
     def _x_subnet(self, t: dict) -> int | None:
         """Which subnet a tweet is about: 'SN81' / 'subnet 81', or an @handle containing a subnet's name."""
@@ -568,7 +585,8 @@ class NewsMonitor:
                 return n
         return None
 
-    async def _post_x(self, t: dict, handle: str) -> None:
+    async def _post_x(self, t: dict, handle: str, parent: dict | None = None) -> None:
+        """`parent` is the tweet he replied to (when the timeline carries it) — shown as context."""
         a = t.get("author") or {}
         rb = t.get("reposted_by") or {}
         me = rb if rb else a
@@ -591,6 +609,10 @@ class NewsMonitor:
         desc = text[:1700]
         if quote.get("text"):
             desc += "\n\n> " + quote["text"].replace("\n", "\n> ")[:500]
+        if parent and parent.get("text") and not x_by(parent, handle):
+            pa = parent.get("author") or {}
+            desc += (f"\n\n**In reply to {pa.get('name', '')} (@{pa.get('screen_name', '')}):**\n> "
+                     + parent["text"].replace("\n", "\n> ")[:600])
         n = self._x_subnet(t)
         info = self.meta.info(n) if n is not None else None
         p0 = self.price_now(n) if n is not None else None
@@ -655,6 +677,14 @@ class NewsMonitor:
             pass
 
 
+def x_by(t: dict, handle: str) -> bool:
+    """True if this timeline item is the account's own action: written by it, or reposted by it.
+    (The with-replies timeline also lists other people's tweets that it replied to.)"""
+    h = handle.lower()
+    return ((t.get("author") or {}).get("screen_name", "").lower() == h
+            or (t.get("reposted_by") or {}).get("screen_name", "").lower() == h)
+
+
 def x_new(items: list[dict], known: set[str], now: float | None = None) -> list[dict]:
     """Timeline items that are new activity, oldest first. `items` is newest-first as the API returns it.
     New = unseen AND above an item we already know. His own tweets must also be under a day old (they
@@ -670,7 +700,19 @@ def x_new(items: list[dict], known: set[str], now: float | None = None) -> list[
         if not t.get("reposted_by") and now - (t.get("created_timestamp") or now) > 86400:
             continue
         out.append(t)
-    return out
+    # `out` is bottom-up = oldest first. A thread is listed parent-first inside the newest-first timeline,
+    # so runs of his own consecutive posts are re-ordered by their real dates; reposts keep their
+    # position (only their original's date is known).
+    ordered, run = [], []
+    for t in out + [None]:
+        if t is not None and not t.get("reposted_by"):
+            run.append(t)
+            continue
+        ordered += sorted(run, key=lambda x: x.get("created_timestamp") or now)
+        run = []
+        if t is not None:
+            ordered.append(t)
+    return ordered
 
 
 def _ts(m: dict) -> float:

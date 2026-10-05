@@ -28,6 +28,7 @@ from .bars import BUCKET, Bars
 from .meta import Meta, Trade
 from .news import NewsMonitor
 from .rpc import Rpc
+from .signals import Signals
 from .trend import TrendBoard, TrendMonitor, parse_timeframes
 
 log = logging.getLogger("snmon")
@@ -81,6 +82,11 @@ class App:
             self.trend = TrendMonitor(parse_timeframes(cfg.trend_timeframes), self.bars, self.meta,
                                       self.trend_discord, self.watched, cfg.trend_story_hours)
             self.trend.dry_run = cfg.dry_run
+            if cfg.trend_signals:
+                self.trend.signals = Signals(
+                    self.trend, self.bars, self.meta, self.trend_discord, self.watched, ROOT / "data" / "signals.json",
+                    dump_pct=cfg.trend_signal_dump_pct, sim=lambda n, rao: self.feed.sim(True, n, rao),
+                    flow=self._flow, dry_run=cfg.dry_run)
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -343,6 +349,10 @@ class App:
             self.bars.update(block.number, block.prices)
             if self.trend.ready:
                 events = self.trend.evaluate(block.number)
+                if self.trend.signals:
+                    self.trend.signals.detect(block.number)      # reversal signals: first, they're time-sensitive
+                    if block.number % 5 == 0:
+                        self.trend.signals.update(block.number)  # outcomes of open signals, about once a minute
                 if events:
                     self.trend.on_events(block.number, events)
         except Exception:
@@ -371,6 +381,8 @@ class App:
         self.trend.history = Rpc(self.cfg.trend_history_endpoint)
         self.trend.history.start()
         await self._trend_warmup(self.feed.last_number or head)
+        if self.trend.signals:
+            asyncio.create_task(self._signal_stats_loop())
         self.trend.ready = True
         ok = {tf.name: int(self.trend.fits[tf.name].ok.sum()) for tf in self.trend.tfs}
         active = sum(int((self.trend.state[tf.name] != 0).sum()) for tf in self.trend.tfs)
@@ -440,6 +452,37 @@ class App:
             finally:
                 for r in hist:
                     await r.stop()
+
+    def _flow(self, netuid: int, blocks: int = 300):
+        """(net TAO, buys, sells) on a subnet over the last hour, from the per-block trade log."""
+        head = self.feed.last_number
+        buys = sells = 0
+        net = 0.0
+        for b in range(head - blocks + 1, head + 1):
+            for t in self.trades.get(b, ()):
+                if t.netuid == netuid:
+                    net += t.tao if t.buy else -t.tao
+                    buys += t.buy
+                    sells += not t.buy
+        return net, buys, sells
+
+    async def _signal_stats_loop(self) -> None:
+        """Keep the signals' track record current: re-run the backtest on stored history every 6 hours."""
+        try:
+            n = await self.trend.signals.seed((self.feed.last_number or self.det.last_block) // BUCKET)
+            print(fmt.dim(f"{now_str()} ── reversal signals: {len(self.trend.signals.active)} in the last 24h "
+                          f"({n} rebuilt from price history)"))
+        except Exception:
+            log.exception("signal seed failed")
+        while True:
+            try:
+                st = await self.trend.signals.backtest((self.feed.last_number or self.det.last_block) // BUCKET)
+                if st:
+                    print(fmt.dim(f"{now_str()} ── reversal signals: backtest {st['days']}d → {st['n']} signals, "
+                                  f"{st['win24']:.0f}% up after 24h, median {st['med24']:+.2f}% (mean {st['mean24']:+.2f}%)"))
+            except Exception:
+                log.exception("signal backtest failed")
+            await asyncio.sleep(6 * 3600)
 
     async def _trend_warmup(self, head: int, days: float = 3.0) -> None:
         """Replay the last few days of 5-minute bars through the trend logic (silently), so a restart

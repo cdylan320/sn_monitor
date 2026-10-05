@@ -101,6 +101,8 @@ class Config:
     trend_story_hours: float
     trend_history_endpoint: str
     trend_board_seconds: float
+    trend_signals: bool
+    trend_signal_dump_pct: float
     news_webhook_url: str
     news_discord_token: str
     news_guild: str
@@ -150,6 +152,8 @@ def load() -> Config:
         trend_history_endpoint=(os.getenv("TREND_HISTORY_ENDPOINT")
                                 or "wss://bittensor-finney.api.onfinality.io/public-ws").strip(),
         trend_board_seconds=_float("TREND_BOARD_SECONDS", 60.0),
+        trend_signals=_bool("TREND_SIGNALS", True),
+        trend_signal_dump_pct=_float("TREND_SIGNAL_DUMP_PCT", 5.0),
         news_webhook_url=(os.getenv("NEWS_WEB_HOOK_URL") or "").strip(),
         news_discord_token=(os.getenv("NEWS_DISCORD_TOKEN") or "").strip().strip('"'),
         news_guild=(os.getenv("NEWS_GUILD_ID") or "").strip(),

@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from snmon.news import ANNOUNCE, TEAM, XPOST, Channel, NewsMonitor, x_new  # noqa: E402
+from snmon.news import ANNOUNCE, TEAM, XPOST, Channel, NewsMonitor, x_by, x_new  # noqa: E402
 
 
 class _Meta:
@@ -150,6 +150,23 @@ def test_x_older_tweets_scrolling_into_view_are_not_news():
 def test_x_new_items_come_oldest_first_and_stale_own_posts_are_skipped():
     timeline = [_tw(12, 0.1), _tw(11, 0.5, repost=True), _tw(10, 30), _tw(8, 40)]
     assert [t["id"] for t in x_new(timeline, {"8"}, NOW)] == ["11", "12"]   # 10 is his own, 30h old
+
+
+def test_x_quote_and_reply_missing_from_the_plain_timeline_are_caught():
+    # 2026-10-04: a quote-post and a reply to another user only show in the with_replies timeline
+    timeline = [_tw(20, 12.1), {**_tw(21, 12.0), "replying_to": {"screen_name": "KeithSingery"}},
+                _tw(15, 37, repost=True), _tw(14, 80, repost=True), _tw(13, 58)]
+    got = x_new(timeline, {"15", "14"}, NOW)
+    assert [t["id"] for t in got] == ["20", "21"]   # written 20 then 21; item 13 is his own and 58h old → not news
+
+
+def test_x_only_the_accounts_own_actions_count():
+    # the with-replies timeline lists the tweet he replied to (someone else's) right above his reply
+    theirs = {"id": "20", "author": {"screen_name": "KeithSingery"}, "quote": {"text": "x"}}
+    reply = {"id": "21", "author": {"screen_name": "const_reborn"}, "replying_to": {"screen_name": "KeithSingery", "status": "20"}}
+    repost = {"id": "15", "author": {"screen_name": "jon_durbin"}, "reposted_by": {"screen_name": "Const_Reborn"}}
+    assert not x_by(theirs, "const_reborn")
+    assert x_by(reply, "const_reborn") and x_by(repost, "const_reborn")
 
 
 if __name__ == "__main__":

@@ -45,7 +45,9 @@ def _fade(col: tuple[int, int, int], k: float = 0.38) -> tuple[int, int, int]:
 
 def render(o: np.ndarray, h: np.ndarray, lo: np.ndarray, c: np.ndarray, fit: np.ndarray, *,
            title: str, badge: str, direction: int, x_labels: list[tuple[int, str]],
-           interval: str = "", exact: np.ndarray | None = None) -> bytes:
+           interval: str = "", exact: np.ndarray | None = None,
+           levels: list[tuple[float, str, tuple[int, int, int]]] | None = None,
+           mark: int | None = None) -> bytes:
     """All arrays have one entry per candle; `fit` is NaN outside the trend window. Candles whose
     `exact` is False (sampled history, not every block) are drawn faded."""
     n = len(c)
@@ -53,7 +55,9 @@ def render(o: np.ndarray, h: np.ndarray, lo: np.ndarray, c: np.ndarray, fit: np.
     d = ImageDraw.Draw(img)
     x0, x1, y0, y1 = PAD_L * S, (W - PAD_R) * S, PAD_T * S, (H - PAD_B) * S
 
-    vals = np.concatenate([h[~np.isnan(h)], lo[~np.isnan(lo)], fit[~np.isnan(fit)]])
+    levels = levels or []
+    vals = np.concatenate([h[~np.isnan(h)], lo[~np.isnan(lo)], fit[~np.isnan(fit)],
+                           np.array([lv[0] for lv in levels], dtype=float)])
     vmin, vmax = float(vals.min()), float(vals.max())
     pad = (vmax - vmin) * 0.08 or vmax * 0.01
     vmin, vmax = vmin - pad, vmax + pad
@@ -110,15 +114,31 @@ def render(o: np.ndarray, h: np.ndarray, lo: np.ndarray, c: np.ndarray, fit: np.
         d.line(pts, fill=BG, width=7 * S, joint="curve")
         d.line(pts, fill=TREND, width=3 * S, joint="curve")
 
+    # price levels (signal cards): dashed line across the plot, label on the left
+    for value, label, lcol in levels:
+        ly_ = Y(value)
+        xd = x0
+        while xd < x1:
+            d.line([(xd, ly_), (min(xd + 10 * S, x1), ly_)], fill=lcol, width=S)
+            xd += 16 * S
+        tw_ = d.textlength(label, font=small)
+        d.rectangle([x0 + 6 * S, ly_ - 9 * S, x0 + 14 * S + tw_, ly_ + 9 * S], fill=BG)
+        d.text((x0 + 10 * S, ly_), label, font=small, fill=lcol, anchor="lm")
+    if mark is not None and 0 <= mark < n:  # where the signal fired
+        mx = X(mark)
+        d.line([(mx, y0), (mx, y1)], fill=TREND, width=S)
+        d.polygon([(mx, y1 - 2 * S), (mx - 7 * S, y1 + 9 * S), (mx + 7 * S, y1 + 9 * S)], fill=TREND)
+
     # legend: candle size, what the amber line is, and what faded candles mean
     lx, ly = x0 + 12 * S, y0 + 14 * S
     if interval:
         d.text((lx, ly), f"{interval} candles", font=small, fill=TEXT_HI, anchor="lm")
         lx += d.textlength(f"{interval} candles", font=small) + 18 * S
-    d.line([(lx, ly), (lx + 22 * S, ly)], fill=TREND, width=3 * S)
-    d.text((lx + 30 * S, ly), "fitted trend line", font=small, fill=TEXT, anchor="lm")
-    if exact is not None and not exact.all():
+    if len(win):
+        d.line([(lx, ly), (lx + 22 * S, ly)], fill=TREND, width=3 * S)
+        d.text((lx + 30 * S, ly), "fitted trend line", font=small, fill=TEXT, anchor="lm")
         lx += 30 * S + d.textlength("fitted trend line", font=small) + 18 * S
+    if exact is not None and not exact.all():
         d.rectangle([lx, ly - 6 * S, lx + 8 * S, ly + 6 * S], fill=_fade(UP))
         d.text((lx + 16 * S, ly), "faded = sampled price history (not every block)", font=small, fill=TEXT, anchor="lm")
 

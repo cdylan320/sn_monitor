@@ -182,6 +182,8 @@ class TrendMonitor:
         self.dry_run = False
         self.history: Rpc | None = None   # a node allowing state_queryStorage, for exact charts
         self.board: TrendBoard | None = None
+        self.flips: list[tuple[int, str, int]] = []
+        self.signals = None  # set by the app: reversal signals shown on the board
         self._last_block = 0
         self._exact_lock = asyncio.Lock()
 
@@ -191,6 +193,7 @@ class TrendMonitor:
         """Refit every timeframe for every subnet; returns (netuid, timeframe, direction) entries."""
         end = block // BUCKET
         self._last_block = block
+        self.flips = []  # (netuid, window, direction) for every window that just turned ▲/▼ on the board
         events = []
         for tf in self.tfs:
             closes = self.bars.closes(end, tf.points, tf.agg)
@@ -205,6 +208,7 @@ class TrendMonitor:
             st[leave] = 0
             flip = (target != 0) & (target != st)
             st[flip] = target[flip]
+            self.flips += [(int(n), tf.name, int(target[n])) for n in np.nonzero(flip)[0]]
             # A card goes out once per trend episode, when the trend also clears the card bar (for long
             # windows that's the same moment it turns on; short windows show on the board first).
             carded = self.carded[tf.name][:w]
@@ -503,21 +507,23 @@ class TrendBoard:
 
         trend_head = f"`{names}  latest trend`"
         embeds = []
+        if m.signals is not None:
+            embeds.append(m.signals.board_section(m._last_block // BUCKET, 600))
         for d, title, color in ((1, "📈 Uptrends", UP_COLOR), (-1, "📉 Downtrends", DOWN_COLOR)):
             embeds.append({"title": f"{title} now ({len(groups[d])})", "color": color,
-                           "description": section(groups[d], trend_head, 1900) if groups[d] else "none right now"})
+                           "description": section(groups[d], trend_head, 1250) if groups[d] else "none right now"})
         embeds.append({"title": f"⏳ Almost trending ({len(building)}) — not a trend yet, but close",
                        "color": 0x6B7280,
-                       "description": section(building, f"`{'heading':<6}  {'move':>8} {'in':<3} {'ready':>5}`", 1500)
+                       "description": section(building, f"`{'heading':<6}  {'move':>8} {'in':<3} {'ready':>5}`", 700)
                        if building else "nothing close to a trend right now"})
         ts = datetime.now(timezone.utc)
-        embeds[-1]["footer"] = {"text": "Up/down lists: grouped and sorted by the most recent window in a trend (3h "
-                                        "first) · latest trend = that window's real price change · 🆕 joined in the "
-                                        "last hour. Almost trending: heading UP or DOWN steadily · ready = how close "
-                                        "to becoming a trend (100% = it starts) · tap a name for taomarketcap"}
+        embeds[-1]["footer"] = {"text": "Up/down: sorted by the most recent window in a trend · latest trend = that "
+                                        "window's real price change · 🆕 new in the last hour · ready = how close to "
+                                        "a trend · signals = 1h turns up after a ≥5% dump · tap a name for taomarketcap"}
         embeds[-1]["timestamp"] = ts.isoformat()
         up, down = len(groups[1]), len(groups[-1])
-        return {"content": f"\u200b\n📊 **Trend board** — trending right now: **{up} up · {down} down** · "
+        sigs = f"**{len(m.signals.active)} reversal signals in 24h** · " if m.signals is not None else ""
+        return {"content": f"\u200b\n📊 **Trend board** — {sigs}trending right now: **{up} up · {down} down** · "
                            f"{len(building)} almost · updated <t:{int(ts.timestamp())}:R> · refreshes every minute",
                 "embeds": embeds, "allowed_mentions": {"parse": []}}
 
