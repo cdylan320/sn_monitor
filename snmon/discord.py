@@ -31,6 +31,8 @@ class Discord:
         self.last_ms: float | None = None
 
     async def start(self) -> None:
+        if self.session is not None:
+            return  # one client per webhook, shared by everything that posts there
         self.session = aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(keepalive_timeout=120, ttl_dns_cache=3600, limit=8),
             timeout=aiohttp.ClientTimeout(total=15),

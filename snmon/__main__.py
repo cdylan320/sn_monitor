@@ -69,7 +69,7 @@ async def _test() -> None:
     e3 = alerts.pending_embed(g, a)
     content = alerts.content(["🧪 **TEST — sample alerts, not real market moves**", alerts.headline(pump, a),
                               alerts.headline(dump, b), alerts.pending_headline(g, a)])
-    d = Discord(cfg.webhook_url)
+    d = Discord(cfg.price_webhook_url)
     await d.start()
     t0 = time.perf_counter()
     mid = await d.send({"content": content, "embeds": [e1, e2, e3], "allowed_mentions": {"parse": []}})

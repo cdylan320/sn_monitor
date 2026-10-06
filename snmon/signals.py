@@ -219,6 +219,11 @@ class Signals:
             fields.append({"name": "Flow, last hour", "inline": True,
                            "value": (f"net **{sign}{fmt.tao(abs(net))} τ**\n{buys} buys · {sells} sells"
                                      if buys or sells else "no trades")})
+        age_days = (sig.block - info.registered_at) * 12 / 86400 if info.registered_at else None
+        if age_days is not None and 0 <= age_days < 7:
+            fields.insert(0, {"name": "⚠️ New subnet", "inline": False,
+                              "value": f"Registered **{age_days:.1f} days ago**. A launch moves far more than an established "
+                                       f"subnet and has little history — the track record below is mostly older subnets."})
         tfs = self.m.tfs
         strip = " ".join(("▲" if self.m.state[t.name][n] > 0 else "▼" if self.m.state[t.name][n] < 0 else "·")
                          .ljust(len(t.name)) for t in tfs)

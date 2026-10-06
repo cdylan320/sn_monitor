@@ -23,6 +23,7 @@ from .chain import PRICE_ALL, Block, Feed, blake2_256, decode_prices, fetch_hist
 from .config import BLOCK_SECONDS, ROOT, Config
 from .detector import Detector, Signal
 from .discord import Discord
+from .lifecycle import SubnetWatch
 from .mempool import Mempool
 from .bars import BUCKET, Bars
 from .meta import Meta, Trade
@@ -46,7 +47,8 @@ def now_str() -> str:
 class App:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
-        self.discord = Discord(cfg.webhook_url, dry_run=cfg.dry_run)
+        self._hooks: dict[str, Discord] = {}
+        self.discord = self._hook(cfg.price_webhook_url)   # PRICE_HOOK_URL: pump/dump + pending trades
         self.meta = Meta(cfg.endpoints[0])
         self.feed = Feed(cfg.endpoints, self.on_block)
         self.det = Detector(cfg.windows, cfg.realert_step_pct, cfg.episode_ttl_blocks, keep_blocks=300)
@@ -67,9 +69,14 @@ class App:
         self._archive: Rpc | None = None
         self._alerts_file = ROOT / "data" / "alerts.jsonl"
         self._alerts_file.parent.mkdir(exist_ok=True)
+        self.subnets: SubnetWatch | None = None
+        if cfg.subnet_alerts:
+            self.subnet_discord = self._hook(cfg.subnet_webhook_url)   # the news channel unless given its own
+            self.subnets = SubnetWatch(self.meta, self.subnet_discord, self._refresh_meta, ROOT / "data" / "subnets.json",
+                                       dry_run=cfg.dry_run)
         self.news: NewsMonitor | None = None
         if cfg.news_webhook_url and cfg.news_discord_token:
-            self.news_discord = Discord(cfg.news_webhook_url, dry_run=cfg.dry_run)
+            self.news_discord = self._hook(cfg.news_webhook_url)
             self.news = NewsMonitor(
                 cfg.news_discord_token, self.news_discord, self.meta,
                 price_now=lambda n: self.det.history.get(self.det.last_block, {}).get(n),
@@ -78,7 +85,7 @@ class App:
         self.trend: TrendMonitor | None = None
         if cfg.trend_webhook_url:
             self.bars = Bars(ROOT / "data" / "bars.db")
-            self.trend_discord = Discord(cfg.trend_webhook_url, dry_run=cfg.dry_run)
+            self.trend_discord = self._hook(cfg.trend_webhook_url)
             self.trend = TrendMonitor(parse_timeframes(cfg.trend_timeframes), self.bars, self.meta,
                                       self.trend_discord, self.watched, cfg.trend_story_hours)
             self.trend.dry_run = cfg.dry_run
@@ -92,7 +99,8 @@ class App:
 
     async def run(self) -> None:
         self._banner()
-        await self.discord.start()
+        for d in self._hooks.values():
+            await d.start()
         try:
             hook = await self.discord.check()
             print(f"  {fmt.dim('discord')}    webhook “{hook.get('name')}” ✓")
@@ -136,12 +144,19 @@ class App:
             asyncio.create_task(self._startup_message())
         await asyncio.Event().wait()
 
+    def _hook(self, url: str) -> Discord:
+        """One Discord client per distinct webhook, so things posting to the same channel share its rate limit."""
+        key = url.split("?")[0].rstrip("/")
+        if key not in self._hooks:
+            self._hooks[key] = Discord(url, dry_run=self.cfg.dry_run)
+        return self._hooks[key]
+
     async def close(self) -> None:
         """Clean shutdown (pm2 restart): close HTTP sessions so nothing is left dangling."""
         if self.news:
             await self.news.client.close()
-        for d in (self.discord, getattr(self, "trend_discord", None), getattr(self, "news_discord", None)):
-            if d is not None and d.session is not None:
+        for d in self._hooks.values():
+            if d.session is not None:
                 await d.session.close()
 
     def watched(self, netuid: int) -> bool:
@@ -159,6 +174,8 @@ class App:
             self._early.append(block)
             return
         prev = self.det.history.get(block.number - 1)
+        if self.subnets:
+            self.subnets.note(block.prices)
         signals = self.det.update(block.number, block.prices, self.watched)
         if signals:
             asyncio.create_task(self._dispatch(block, signals))
@@ -234,12 +251,14 @@ class App:
 
     async def _after_block(self, block: Block) -> None:
         try:
-            tr = await asyncio.wait_for(self.meta.trades(block.number, block.hash), 15)
+            tr, life = await asyncio.wait_for(self.meta.trades(block.number, block.hash), 15)
             self.trades_failed.discard(block.number)
         except Exception as e:
             log.debug("trade log failed for #%d: %s", block.number, e)
-            tr = []
+            tr, life = [], []
             self.trades_failed.add(block.number)
+        if life and self.subnets:
+            asyncio.create_task(self.subnets.on_events(block.number, life))
         self.trades[block.number] = tr
         if self.trade_log_start is None:
             self.trade_log_start = block.number
@@ -530,17 +549,34 @@ class App:
         except Exception as e:
             log.warning("backfill failed (%s) — long windows warm up live", e)
 
+    async def _refresh_meta(self) -> None:
+        """Reload subnet metadata. A slot that was re-registered is a different subnet: forget its history."""
+        for n in await asyncio.wait_for(self.meta.refresh(), 60):
+            log.info("SN%d was re-registered — resetting its history", n)
+            self.det.reset(n)
+            self.ref24.pop(n, None)
+            if self.trend:
+                self.bars.reset(n)
+                self.trend.reset(n)
+
     async def _meta_loop(self) -> None:
+        started = False
         while True:
+            try:
+                if self.subnets and not started and self.meta.subnets:
+                    await self.subnets.start()   # compares with the view saved before the last shutdown
+                    started = True
+                    print(fmt.dim(f"{now_str()} ── subnet watch on · {len(self.subnets.known) - 1} subnets · slots "
+                                  f"{self.subnets.facts.get('subnets', '?')}/{self.subnets.facts.get('limit', '?')} · "
+                                  f"next to be pruned SN{self.subnets.facts.get('prune')} · registering costs "
+                                  f"{fmt.tao(self.subnets.facts.get('cost', 0))} τ"))
+            except Exception:
+                log.exception("subnet watch start failed")
             await asyncio.sleep(60)
             try:
-                for n in await asyncio.wait_for(self.meta.refresh(), 60):
-                    log.info("SN%d was re-registered — resetting its history", n)
-                    self.det.reset(n)
-                    self.ref24.pop(n, None)
-                    if self.trend:
-                        self.bars.reset(n)
-                        self.trend.reset(n)
+                await self._refresh_meta()
+                if self.subnets and started:
+                    await self.subnets.reconcile()
             except Exception as e:
                 log.debug("meta refresh failed: %s", e)
 

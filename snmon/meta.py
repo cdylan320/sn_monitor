@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from async_substrate_interface import AsyncSubstrateInterface
 from scalecodec.base import ScaleBytes
@@ -17,6 +17,15 @@ for noisy in ("async_substrate_interface", "websockets", "bittensor"):
     logging.getLogger(noisy).setLevel(logging.WARNING)
 
 IMG_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+
+# SubtensorModule events about the subnets themselves (registration, removal, ownership, identity …)
+LIFECYCLE_EVENTS = frozenset({
+    "NetworkAdded", "NetworkRemoved", "NetworkRegistrationQueued", "NetworkRegistrationCancelled",
+    "DissolveNetworkScheduled", "ColdkeySwapAnnounced", "ColdkeySwapped", "ColdkeySwapDisputed",
+    "ColdkeySwapReset", "ColdkeySwapCleared", "SubnetOwnerChanged", "SubnetOwnerHotkeySet",
+    "SubnetIdentitySet", "SubnetIdentityRemoved", "SymbolUpdated", "FirstEmissionBlockNumberSet",
+    "SubnetLeaseCreated", "SubnetLeaseTerminated", "SubnetLimitSet",
+})
 
 
 def _text(v) -> str:
@@ -37,6 +46,9 @@ class SubnetInfo:
     registered_at: int
     logo: str | None
     url: str | None
+    owner: str = ""            # owner coldkey
+    owner_hotkey: str = ""
+    identity: dict = field(default_factory=dict)  # name, url, github, description, logo, discord, contact
 
     @property
     def label(self) -> str:
@@ -93,11 +105,12 @@ class Meta:
     def info(self, netuid: int) -> SubnetInfo:
         return self.subnets.get(netuid) or SubnetInfo(netuid, "", "", 0.0, 0, None, None)
 
-    async def _refresh(self) -> list[int]:
-        """Reload names/liquidity. Returns netuids whose registration changed (re-registered)."""
+    async def _refresh(self, block_hash: str | None = None) -> list[int]:
+        """Reload names/liquidity (at the chain head, or at `block_hash` for replays). Returns netuids
+        whose registration changed (re-registered)."""
         try:
             sub = await self._substrate()
-            res = await sub.runtime_call("SubnetInfoRuntimeApi", "get_all_dynamic_info")
+            res = await sub.runtime_call("SubnetInfoRuntimeApi", "get_all_dynamic_info", block_hash=block_hash)
         except Exception:
             await self._reset()
             raise
@@ -122,6 +135,12 @@ class Meta:
                 registered_at=int(r.get("network_registered_at") or 0),
                 logo=logo,
                 url=url,
+                owner=str(r.get("owner_coldkey") or ""),
+                owner_hotkey=str(r.get("owner_hotkey") or ""),
+                identity={"name": _text(ident.get("subnet_name")), "url": _text(ident.get("subnet_url")),
+                          "github": _text(ident.get("github_repo")), "description": _text(ident.get("description")),
+                          "logo": _text(ident.get("logo_url")), "discord": _text(ident.get("discord")),
+                          "contact": _text(ident.get("subnet_contact"))},
             )
         changed = [n for n, s in fresh.items() if n in self.subnets and self.subnets[n].registered_at != s.registered_at]
         self.subnets = fresh
@@ -129,7 +148,8 @@ class Meta:
 
     # ── events → trades (for "what caused it") ───────────────────────────
 
-    async def _trades(self, block: int, block_hash: str) -> list[Trade]:
+    async def _trades(self, block: int, block_hash: str) -> tuple[list[Trade], list[tuple[str, tuple]]]:
+        """One decode of the block's events → (stake trades, subnet lifecycle events)."""
         sub = await self._substrate()
         try:
             events = await sub.get_events(block_hash)
@@ -137,17 +157,44 @@ class Meta:
             await self._reset()
             raise
         out: list[Trade] = []
+        life: list[tuple[str, tuple]] = []
         for e in events:
             ev = e.get("event", e)
             if ev.get("module_id") != "SubtensorModule":
                 continue
             name = ev.get("event_id")
-            if name not in ("StakeAdded", "StakeRemoved"):
-                continue
-            # (coldkey, hotkey, tao, alpha, netuid, fee) — swaps/moves also emit these
-            cold, _hot, tao, alpha, netuid, *_ = ev["attributes"]
-            out.append(Trade(block, int(netuid), name == "StakeAdded", int(tao) / RAO, int(alpha) / RAO, str(cold)))
-        return out
+            if name in ("StakeAdded", "StakeRemoved"):
+                # (coldkey, hotkey, tao, alpha, netuid, fee) — swaps/moves also emit these
+                cold, _hot, tao, alpha, netuid, *_ = ev["attributes"]
+                out.append(Trade(block, int(netuid), name == "StakeAdded", int(tao) / RAO, int(alpha) / RAO, str(cold)))
+            elif name in LIFECYCLE_EVENTS:
+                life.append((name, ev.get("attributes")))  # a tuple, a dict of named fields, or one bare value
+        return out, life
+
+    async def _facts(self) -> dict:
+        """Slot usage, the cost to register a subnet, and which subnet is first in line to be pruned."""
+        sub = await self._substrate()
+
+        async def storage(item):
+            r = await sub.query("SubtensorModule", item, [])
+            return getattr(r, "value", r)
+
+        async def api(name, method):
+            r = await sub.runtime_call(name, method)
+            return getattr(r, "value", r)
+
+        total, limit, cost, prune, swap_delay = await asyncio.gather(
+            storage("TotalNetworks"), storage("SubnetLimit"),
+            api("SubnetRegistrationRuntimeApi", "get_network_registration_cost"),
+            api("SubnetInfoRuntimeApi", "get_subnet_to_prune"), storage("ColdkeySwapAnnouncementDelay"),
+            return_exceptions=True)
+
+        def ok(v, default=None):
+            return default if isinstance(v, BaseException) else v
+
+        return {"subnets": max(int(ok(total, 0) or 0) - 1, 0),  # TotalNetworks counts root
+                "limit": int(ok(limit, 0) or 0), "cost": int(ok(cost, 0) or 0) / RAO,
+                "prune": ok(prune), "swap_delay": int(ok(swap_delay, 0) or 0)}
 
     # ── mempool decoding ─────────────────────────────────────────────────
 
@@ -168,11 +215,15 @@ class Meta:
 
     # ── thread-hopping wrappers (call these from the main loop) ──────────
 
-    def refresh(self):
-        return self._w.run(self._refresh())
+    def refresh(self, block_hash: str | None = None):
+        return self._w.run(self._refresh(block_hash))
 
     def trades(self, block: int, block_hash: str):
+        """→ (trades, lifecycle events) for one block."""
         return self._w.run(self._trades(block, block_hash))
+
+    def facts(self):
+        return self._w.run(self._facts())
 
     def decode_extrinsic(self, hex_ext: str):
         return self._w.run(self._decode_extrinsic(hex_ext))

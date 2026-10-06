@@ -7,6 +7,14 @@ one pumps or dumps, e.g.
 🚀 SN64 Chutes PUMP +20.00% · 0.004300 → 0.005160 τ · 36s
 ```
 
+## Channels
+
+| `.env` variable | Channel | What posts there |
+|---|---|---|
+| `PRICE_HOOK_URL` | price | pump/dump alerts, pending-trade (mempool) alerts |
+| `TREND_WEB_HOOK_URL` | trend | trend cards, reversal signals, the live trend board |
+| `NEWS_WEB_HOOK_URL` | news | subnet-channel news, X posts, **subnet lifecycle alerts** |
+
 ## How fast
 
 Prices on Bittensor only change when a block lands (every 12 s), so polling in milliseconds
@@ -60,6 +68,34 @@ Pumps are measured from the window's low, dumps from the window's high.
 is backfilled silently, so you never get stale alerts.
 
 All settings are listed in [.env.example](.env.example). Copy any you want into `.env`.
+
+## Subnet lifecycle alerts
+
+These alerts cover changes to the subnets themselves, such as slots, owners and names. They post
+in the **news channel** (`NEWS_WEB_HOOK_URL`), or in their own if `SUBNET_WEB_HOOK_URL` is set. They're read from chain
+events on every block, about 1 s after the block:
+
+| Card | Chain event |
+|---|---|
+| ⏳ New subnet incoming | `NetworkRegistrationQueued`: name, description, who, TAO locked, which slot. About **4 minutes before** the subnet exists |
+| 💀 Subnet deregistered | `NetworkRemoved`: last price, pool, owner, lifetime, and what it made room for |
+| 🆕 New subnet registered | `NetworkAdded`: owner, hotkey, price, pool, whose slot it took |
+| ⚠️ Dissolve scheduled | `DissolveNetworkScheduled` |
+| 🔑 Owner coldkey swap | `ColdkeySwapAnnounced` / `Swapped` / `Disputed` / `Reset` / `Cleared`, only for coldkeys that own a subnet |
+| 👑 Owner changed, 🗝️ owner hotkey changed | `SubnetOwnerChanged`, `SubnetOwnerHotkeySet` |
+| ✏️ Renamed / identity changed, 🔤 symbol | `SubnetIdentitySet`, `SymbolUpdated`, shown as a before/after diff |
+| 🚀 Emissions start, 📜 lease, 🧮 slot limit | `FirstEmissionBlockNumberSet`, `SubnetLease*`, `SubnetLimitSet` |
+| ⚠️ Next in line to be deregistered | polled; announced once a new candidate has held for 10 minutes |
+
+A registration is one story told over several blocks. In one block the bottom subnet is pruned and
+the newcomer is queued. A few minutes later, when cleanup finishes, the newcomer is added, and its
+own hotkey and identity events are folded into that card. The cards were verified by replaying the
+real SN116 slot change (blocks 9210610 → 9210632).
+
+As a safety net, after every metadata refresh (each minute) the subnet list is compared with the
+last reported view, which is kept in `data/subnets.json`. A change whose event was missed, including
+during downtime, is still announced. A re-registered slot also resets that netuid's price, trend and
+signal history, and reversal-signal cards flag subnets under 7 days old.
 
 ## Trend monitor (second channel)
 
@@ -230,6 +266,7 @@ snmon/mempool.py   pending-trade decoding + exact impact prediction
 snmon/meta.py      names/logos/liquidity, block events → trades (worker thread)
 snmon/bars.py      5-minute OHLC bar store (numpy ring + SQLite), history backfill
 snmon/trend.py     trend fits, per-timeframe state machine, stories, trend cards
+snmon/lifecycle.py subnet lifecycle: registrations, removals, owners, identities, prune candidate
 snmon/signals.py   reversal signals: rule, cards, 24h outcome tracking, built-in backtest
 snmon/chart.py     candlestick chart PNG for trend and signal cards
 snmon/gateway.py   read-only Discord user client (REST + gateway) for the news monitor

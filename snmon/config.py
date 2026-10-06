@@ -78,7 +78,7 @@ def _windows(raw: str) -> list[tuple[int, float]]:
 
 @dataclass(frozen=True)
 class Config:
-    webhook_url: str
+    price_webhook_url: str   # PRICE_HOOK_URL — pump/dump and pending-trade alerts
     endpoints: list[str]
     archive_endpoint: str
     windows: list[tuple[int, float]]
@@ -103,6 +103,8 @@ class Config:
     trend_board_seconds: float
     trend_signals: bool
     trend_signal_dump_pct: float
+    subnet_alerts: bool
+    subnet_webhook_url: str
     news_webhook_url: str
     news_discord_token: str
     news_guild: str
@@ -122,12 +124,15 @@ class Config:
 
 def load() -> Config:
     load_dotenv(ROOT / ".env")
-    webhook = (os.getenv("WEB_HOOK_URL") or os.getenv("DISCORD_WEBHOOK_URL") or "").strip()
+    # PRICE_HOOK_URL is the name; the older WEB_HOOK_URL still works so an old .env doesn't break
+    webhook = next((v.strip() for v in (os.getenv(k) for k in ("PRICE_HOOK_URL", "PRICE_WEB_HOOK_URL", "WEB_HOOK_URL",
+                                                               "DISCORD_WEBHOOK_URL")) if v and v.strip()), "")
     if not webhook:
-        raise SystemExit("WEB_HOOK_URL is missing in .env")
+        raise SystemExit("PRICE_HOOK_URL is missing in .env")
+    news_webhook = (os.getenv("NEWS_WEB_HOOK_URL") or "").strip()
     windows = _windows(os.getenv("WINDOWS") or DEFAULT_WINDOWS)
     return Config(
-        webhook_url=webhook,
+        price_webhook_url=webhook,
         endpoints=_list("RPC_ENDPOINTS", DEFAULT_ENDPOINTS),
         archive_endpoint=(os.getenv("ARCHIVE_ENDPOINT") or DEFAULT_ARCHIVE).strip(),
         windows=windows,
@@ -154,7 +159,10 @@ def load() -> Config:
         trend_board_seconds=_float("TREND_BOARD_SECONDS", 60.0),
         trend_signals=_bool("TREND_SIGNALS", True),
         trend_signal_dump_pct=_float("TREND_SIGNAL_DUMP_PCT", 5.0),
-        news_webhook_url=(os.getenv("NEWS_WEB_HOOK_URL") or "").strip(),
+        subnet_alerts=_bool("SUBNET_ALERTS", True),
+        # subnet lifecycle alerts go to the news channel (their own webhook if set; price channel as last resort)
+        subnet_webhook_url=(os.getenv("SUBNET_WEB_HOOK_URL") or "").strip() or news_webhook or webhook,
+        news_webhook_url=news_webhook,
         news_discord_token=(os.getenv("NEWS_DISCORD_TOKEN") or "").strip().strip('"'),
         news_guild=(os.getenv("NEWS_GUILD_ID") or "").strip(),
         news_min_team_chars=_int("NEWS_MIN_TEAM_CHARS", 120),
