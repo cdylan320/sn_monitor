@@ -130,21 +130,30 @@ about 20–25 cards/day across ~129 subnets. SN80's late-September slide registe
 running, the card says so instead of calling it a reversal. Example: `↘️ PULLBACK · 12h DOWNTREND
 in a 3d UPTREND · still +4.17% over 3d`.
 
-**Reversal signals ("dump → pump starting").** A signal fires when the **1h window turns up
-after a drop of ≥5% from the 24h high**, at most once per subnet every 12 hours. This rule was chosen
-by backtest on 8 days of 5-minute prices for every subnet (2026-10-05), not by intuition:
+**Reversal signals ("dump → pump starting").** A signal fires when the **price turns up over the
+trigger window after a drop of ≥5% from the 24h high**, at most once per subnet every 12 hours. The
+trigger window is `TREND_SIGNAL_WINDOW`, default `15m:2:0.8`: the last three 5-minute bars rise ≥2%
+in total, each higher than the one before. It is evaluated on every block (the bar in progress
+counts), so a signal fires within seconds of the turn.
 
-| Entry rule | Signals/day | Up after 24h | Median after 24h |
-|---|---|---|---|
-| Buy at random | — | 39% | ~0% (mean +0.3%) |
-| 1h turns up, no dump before | 11 | 51% | (mean +1.4%) |
-| **1h turns up after a ≥5% dump, 12h spacing (the signal)** | **~4** | **~63–66%** | **+2.3%** (mean +3.4%) |
-| Waiting for the 3h window to confirm | 17 | 42% | (mean −0.7%) |
+What the window changes — the same rule replayed on 8 days of 5-minute prices for every subnet
+(2026-10-07):
+
+| Trigger window | Signals/day | Higher after 24h | Median after 24h | Best gain within 24h (median) |
+|---|---|---|---|---|
+| Buy at random | — | 38% | −0.13% | +0.6% |
+| 1h, ≥2% | 4.3 | 54% | +1.50% | +7.4% |
+| 30m, ≥2% | 5.1 | 52% | +1.22% | +4.9% |
+| **15m, ≥2% (the default)** | **7.3** | **52%** | **+0.33%** | **+5.6%** |
+| 5m, ≥1% (a single candle) | 18.3 | 44% | −0.83% | +3.8% |
+
+A shorter window fires earlier and more often; each signal is a little weaker. Waiting for the 3h
+window to confirm was negative — the edge is in being early.
 
 It's an edge, not a guarantee:
-- About 4 signals in 10 lose.
-- The typical dip along the way is −3%; the worst was −7% and the best +25%.
-- The sample is one week.
+- About half the signals lose.
+- The typical best gain along the way is +5–7%, so an exit that waits for a far bigger move gives it back.
+- The sample is eight days.
 
 So every signal card carries:
 - **Entry**, the **invalidation level** (the dump's low) and the **previous high**.
@@ -155,13 +164,13 @@ So every signal card carries:
 
 The board also shows a **👀 Watching** list under the signals: subnets that have dumped ≥5% from
 their 24h high, haven't turned up yet, and haven't signalled in the last 12 hours. The closest to a
-signal come first. `ready` is the weakest of the three things a signal needs (the 1h trend line's
-move, its steadiness, and rising through the hour), so 100% means the signal fires.
+signal come first. `ready` is the weakest of the three things a signal needs (the trigger window's
+move, its steadiness, and rising bar after bar), so 100% means the signal fires.
 
 Each signal is then tracked for 24 hours. The card is edited with the result at +1h, +6h and +24h,
 and if the price closes below the invalidation level. The board lists the last 24 hours of signals,
-each with its % since entry. `TREND_SIGNALS=false` turns signals off, and `TREND_SIGNAL_DUMP_PCT`
-sets the dump size.
+each with its % since entry. `TREND_SIGNALS=false` turns signals off, `TREND_SIGNAL_DUMP_PCT`
+sets the dump size and `TREND_SIGNAL_WINDOW` the trigger window.
 
 **Live trend board.** One message always sits at the bottom of the trend channel, listing every
 subnet that's trending right now:

@@ -1,19 +1,32 @@
 """Reversal signals — "dump → pump starting".
 
-Rule (the one that survived a backtest on 8 days of 5-minute prices for every subnet, 2026-10-05):
+Rule:
 
-    the 1h window turns ▲ on the trend board      (trend line ≥ +2% over the hour, steady)
+    price turns up over the trigger window        (default 15m: the last three 5-minute bars rise
+                                                   ≥ 2% in total, each one higher than the one before)
     AND price is ≥ 5% below its 24h high          (it is coming out of a dump)
+    at most once per subnet every 12 hours
 
-Backtest of exactly this rule: 43 signals in 7 days over 19 subnets — after 24h the price was higher
-58% of the time, median +2.0% (mean +3.2%; +1.8% without the 3 best), versus +0.3% / 39% for buying
-at random. Typical best gain along the way +8.5%, typical worst dip −3.8%; worst signal −7%, best +25%.
-Waiting for the 3h window to confirm was *negative* (−0.7%) — the edge is in being early.
+The trigger window is `TREND_SIGNAL_WINDOW` (window:min %:steadiness — "15m:2:0.8", "30m:2:0.85",
+"1h:2:0.85"). It is evaluated on every block, with the bar in progress as the last point, so a signal
+fires within seconds of the turn rather than at a bar's close.
 
-That is an edge, not a guarantee: 4 in 10 signals lose. So every signal carries its invalidation level
-(the dump's low), is tracked for 24 hours, and the card is updated with what actually happened. The
-track record shown on cards is recomputed from the stored price history, and the live record from
-the signals this monitor actually posted.
+What the window changes, replayed on 8 days of 5-minute prices for every subnet (2026-10-07):
+
+    window     signals/day   higher after 24h   median after 24h   best gain within 24h (median)
+    1h  ≥2%        4.3            54%               +1.50%               +7.4%
+    30m ≥2%        5.1            52%               +1.22%               +4.9%
+    15m ≥2%        7.3            52%               +0.33%               +5.6%
+    5m  ≥1%       18.3            44%               −0.83%               +3.8%      (one candle: a pump alert)
+    random buys     —             38%               −0.13%               +0.6%
+
+A shorter window fires earlier and more often; each signal is a little weaker. Waiting longer than
+1h (3h confirmation) was negative — the edge is in being early.
+
+That is an edge, not a guarantee: about half the signals lose. So every signal carries its
+invalidation level (the dump's low), is tracked for 24 hours, and the card is updated with what
+actually happened. The track record shown on cards is recomputed from the stored price history with
+the rule in use, and the live record from the signals this monitor actually posted.
 """
 from __future__ import annotations
 
@@ -28,12 +41,12 @@ from pathlib import Path
 import numpy as np
 
 from . import alerts, chart, fmt
-from .bars import BUCKET, Bars
+from .bars import BUCKET, NMAX, Bars
 from .trend import EXIT_FRACTION, EXIT_R2, fit_all
 
 log = logging.getLogger("snmon.signals")
 
-WINDOW = "1h"           # the window whose ▲ start is the trigger
+DEFAULT_TRIGGER = "15m:2:0.8"
 LOOKBACK = 288          # buckets (24h) for the high the dump is measured from
 COOLDOWN = 144          # buckets (12h) between signals on one subnet: backtested 66% up vs 59% at 3h,
                         # and it stops re-signalling a subnet that keeps failing to bounce
@@ -42,6 +55,30 @@ CHECKPOINTS = ((12, "1h"), (72, "6h"), (288, "24h"))
 SIZES = (10, 50, 100)   # TAO, for the slippage line
 COLOR, WIN, LOSS = 0x06B6D4, 0x16A34A, 0xDC2626
 GREY, RED = (148, 155, 164), (239, 68, 68)
+
+
+@dataclass(frozen=True)
+class Trigger:
+    """The window whose turn up fires a signal."""
+    name: str       # "15m"
+    points: int     # 5-minute bars in the window
+    enter: float    # % the fitted line must rise across the window
+    r2: float       # how cleanly price must follow that line (1 = a straight climb)
+
+    def describe(self) -> str:
+        return f"{self.name} ≥{self.enter:g}%"
+
+
+def parse_trigger(spec: str) -> Trigger:
+    """"15m:2:0.8" → Trigger. Window in minutes or hours (multiples of 5 minutes, at least 10m)."""
+    parts = (spec or DEFAULT_TRIGGER).replace(" ", "").split(":")
+    name = parts[0].lower()
+    minutes = int(name[:-1]) * (60 if name.endswith("h") else 1)
+    if name[-1] not in "mh" or minutes % 5 or minutes < 10:
+        raise ValueError(f"TREND_SIGNAL_WINDOW: '{spec}' — use e.g. 15m, 30m or 1h")
+    points = minutes // 5
+    return Trigger(name, points, float(parts[1]) if len(parts) > 1 else 2.0,
+                   float(parts[2]) if len(parts) > 2 else (0.8 if points <= 4 else 0.85))
 
 
 @dataclass
@@ -68,8 +105,12 @@ class Sig:
 
 class Signals:
     def __init__(self, monitor, bars: Bars, meta, discord, watched, path: Path, dump_pct: float = 5.0,
-                 sim=None, flow=None, dry_run: bool = False) -> None:
+                 sim=None, flow=None, dry_run: bool = False, trigger: Trigger | None = None) -> None:
         self.m = monitor
+        self.trigger = trigger or parse_trigger(DEFAULT_TRIGGER)
+        self.fit = None                     # latest fit of the trigger window, every subnet
+        self._st = np.zeros(NMAX, dtype=np.int8)   # 1 = the trigger window is up for this subnet
+        self._armed = False                 # the first look only records what is already up
         self.bars = bars
         self.meta = meta
         self.discord = discord
@@ -96,11 +137,27 @@ class Signals:
         i_hi = int(closes.argmax())
         return float(closes[-1]), float(closes[i_hi]), float(closes[i_hi:].min())
 
+    def _turned_up(self, bucket: int) -> list[int]:
+        """Refit the trigger window (the bar in progress is its last point) → subnets that just turned up."""
+        tg = self.trigger
+        f = fit_all(self.bars.closes(bucket, tg.points, 1), self.bars.coverage)
+        self.fit = f
+        st = self._st[:len(f.change)]
+        up = f.ok & (f.change >= tg.enter) & (f.r2 >= tg.r2) & (f.shape == 1)
+        st[(st != 0) & (~f.ok | (f.change < tg.enter * EXIT_FRACTION) | (f.r2 < EXIT_R2))] = 0
+        flip = up & (st != 1)
+        st[flip] = 1
+        return [int(n) for n in np.nonzero(flip)[0]]
+
     def detect(self, block: int) -> list[Sig]:
         bucket = block // BUCKET
+        turned = self._turned_up(bucket)
+        if not self._armed:   # just started: what is already rising is not a fresh turn
+            self._armed = True
+            return []
         out = []
-        for n, win, d in self.m.flips:
-            if win != WINDOW or d != 1 or not self.watched(n):
+        for n in turned:
+            if n == 0 or not self.watched(n):
                 continue
             if bucket - self._last.get(n, -10**9) < COOLDOWN:
                 continue
@@ -117,7 +174,7 @@ class Signals:
             self.posted += 1
             info = self.meta.info(n)
             print(fmt.bgreen(f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]} 🎯 SIGNAL   SN{n:<3} {info.name[:16]:<16} "
-                             f"dump {fmt.pct((low / high - 1) * 100)} → 1h uptrend started · entry {fmt.price(price * 1e9)} τ"))
+                             f"dump {fmt.pct((low / high - 1) * 100)} → {self.trigger.name} turn up · entry {fmt.price(price * 1e9)} τ"))
             asyncio.create_task(self._post(sig))
         if out:
             self._save()
@@ -177,7 +234,7 @@ class Signals:
         n, up = self.record()
         if n:
             parts.append(f"Live, signals posted here: {up}/{n} up after 24h.")
-        parts.append("_An edge, not a guarantee — about 4 in 10 lose. Not financial advice._")
+        parts.append("_An edge, not a guarantee — about half lose. Not financial advice._")
         return "\n".join(parts)
 
     def _result(self, sig: Sig, bucket: int | None = None) -> str:
@@ -200,7 +257,7 @@ class Signals:
         _, _, to_stop = fmt.move(entry, lo)
         _, _, to_high = fmt.move(entry, hi)
         desc = (f"```diff\n- dump    {d_a} τ → {d_b} τ  ({fmt.pct(d_pc)})\n"
-                f"+ bounce  {b_a} τ → {b_b} τ  ({fmt.pct(b_pc)})  ← 1h uptrend started\n```")
+                f"+ bounce  {b_a} τ → {b_b} τ  ({fmt.pct(b_pc)})  ← turned up ({self.trigger.name})\n```")
         fields = [
             {"name": "Entry (now)", "value": f"**{fmt.price(entry)} τ**", "inline": True},
             {"name": "Invalidation", "value": f"**{fmt.price(lo)} τ** ({fmt.pct(to_stop)})\nclose below the dump's low",
@@ -237,7 +294,7 @@ class Signals:
             "color": COLOR,
             "fields": fields,
             "image": {"url": "attachment://signal.png"},
-            "footer": {"text": f"Signal = the 1h trend turns up after a ≥{self.dump_pct:g}% drop from the 24h high · "
+            "footer": {"text": f"Signal = price turns up (≥{self.trigger.enter:g}% over {self.trigger.name}) after a ≥{self.dump_pct:g}% drop from the 24h high · "
                                f"tracked for 24h, this card updates with the result · block #{sig.block}"},
             "timestamp": datetime.fromtimestamp(sig.ts, timezone.utc).isoformat(),
         }
@@ -301,12 +358,11 @@ class Signals:
     # ── board ────────────────────────────────────────────────────────────
 
     def watching(self, bucket: int) -> list[tuple[float, float, str]]:
-        """Subnets that could signal next: ≥ dump_pct below their 24h high, 1h trend not up yet, and not
+        """Subnets that could signal next: ≥ dump_pct below their 24h high, not turned up yet, and not
         signalled in the last 12h. → (ready, dump %, board row), closest to a signal first. `ready` is how
-        far the 1h trend line is toward the bar that turns the 1h window ▲ (100% = the signal fires)."""
-        tf = next((t for t in self.m.tfs if t.name == WINDOW), None)
-        f = self.m.fits.get(WINDOW)
-        if tf is None or f is None:
+        far the trigger window is toward turning up (100% = the signal fires)."""
+        tg, f = self.trigger, self.fit
+        if f is None:
             return []
         closes = self.bars.closes(bucket, LOOKBACK + 1, 1).astype(np.float64)
         with np.errstate(invalid="ignore"):
@@ -315,18 +371,18 @@ class Signals:
         for n in range(1, min(closes.shape[1], len(f.ok))):
             if np.isnan(dd[n]) or dd[n] > -self.dump_pct or not f.ok[n] or not self.watched(n):
                 continue
-            if bucket - self._last.get(n, -10**9) < COOLDOWN or self.m.state[WINDOW][n] == 1:
+            if bucket - self._last.get(n, -10**9) < COOLDOWN or self._st[n] == 1:
                 continue
-            # a signal needs the 1h line to move enough AND steadily AND to be rising through the hour:
+            # a signal needs the line to move enough AND steadily AND to rise bar after bar:
             # readiness is the weakest of those, so 100% really means "fires now"
-            ready = min(max(float(f.change[n]), 0.0) / tf.enter, float(f.r2[n]) / tf.r2, 0.99)
+            ready = min(max(float(f.change[n]), 0.0) / tg.enter, float(f.r2[n]) / tg.r2, 0.99)
             if int(f.shape[n]) != 1:
                 ready = min(ready, 0.5)
-            hour = (float(f.last[n]) / float(f.first[n]) - 1) * 100
+            move = (float(f.last[n]) / float(f.first[n]) - 1) * 100
             info = self.meta.info(n)
             link = f"[SN{n} · {info.name}]({alerts.subnet_url(n)})"
             out.append((ready, float(dd[n]),
-                        f"`{fmt.pct(float(dd[n])):>8}  {fmt.pct(hour):>7}  {ready * 100:>4.0f}%` {link}"))
+                        f"`{fmt.pct(float(dd[n])):>8}  {fmt.pct(move):>8}  {ready * 100:>4.0f}%` {link}"))
         return sorted(out, key=lambda r: (-r[0], r[1]))
 
     def board_section(self, bucket: int, budget: int = 800) -> dict:
@@ -364,7 +420,7 @@ class Signals:
         if watch:
             turning = sum(1 for r in watch if r[0] > 0)
             body += (f"\n\n**👀 Watching — dumped ≥{self.dump_pct:g}%, not turned up yet ({len(watch)})**\n"
-                     f"`{'off high':>8}  {'last 1h':>7}  {'ready':>5}`")
+                     f"`{'off high':>8}  {'last ' + self.trigger.name:>8}  {'ready':>5}`")
             used, shown = 0, 0
             for _, _, r in watch:
                 if used + len(r) + 1 > 720 or shown >= 8:
@@ -374,8 +430,8 @@ class Signals:
                 shown += 1
             if shown < len(watch):
                 body += f"\n… +{len(watch) - shown} more, further from turning"
-            body += (f"\n*off high = below its 24h high · ready = how close the last hour is to a steady enough "
-                     f"rise (100% = a signal fires) · {turning} rising now*")
+            body += (f"\n*off high = below its 24h high · ready = how close the last {self.trigger.name} is to a "
+                     f"{self.trigger.enter:g}% steady rise (100% = a signal fires) · {turning} rising now*")
         count = f"{len(rows)} signal{'s' * (len(rows) != 1)} in the last 24h"
         return {"title": f"🎯 Reversal signals — dump → pump starting · {count}", "color": COLOR,
                 "description": body}
@@ -385,9 +441,7 @@ class Signals:
     async def _triggers(self, closes: np.ndarray) -> list[tuple[int, int, float, float, float]]:
         """Replay this exact rule over a [time, subnet] matrix of 5-minute closes (the first LOOKBACK rows
         are context). → (row, netuid, price, 24h high, dump low) per signal. Yields to the event loop."""
-        tf = next((t for t in self.m.tfs if t.name == WINDOW), None)
-        if tf is None:
-            return []
+        tf = self.trigger
         total, w = closes.shape
         ones = np.ones(w)
         st = np.zeros(w, dtype=np.int8)

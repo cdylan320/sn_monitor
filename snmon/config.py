@@ -103,6 +103,7 @@ class Config:
     trend_board_seconds: float
     trend_signals: bool
     trend_signal_dump_pct: float
+    trend_signal_window: str
     subnet_alerts: bool
     subnet_webhook_url: str
     news_webhook_url: str
@@ -159,6 +160,8 @@ def load() -> Config:
         trend_board_seconds=_float("TREND_BOARD_SECONDS", 60.0),
         trend_signals=_bool("TREND_SIGNALS", True),
         trend_signal_dump_pct=_float("TREND_SIGNAL_DUMP_PCT", 5.0),
+        # window:min %:steadiness — the turn up that fires a reversal signal
+        trend_signal_window=(os.getenv("TREND_SIGNAL_WINDOW") or "15m:2:0.8").strip(),
         subnet_alerts=_bool("SUBNET_ALERTS", True),
         # subnet lifecycle alerts go to the news channel (their own webhook if set; price channel as last resort)
         subnet_webhook_url=(os.getenv("SUBNET_WEB_HOOK_URL") or "").strip() or news_webhook or webhook,

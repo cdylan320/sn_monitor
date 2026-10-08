@@ -29,7 +29,7 @@ from .bars import BUCKET, Bars
 from .meta import Meta, Trade
 from .news import NewsMonitor
 from .rpc import Rpc
-from .signals import Signals
+from .signals import Signals, parse_trigger
 from .trend import TrendBoard, TrendMonitor, parse_timeframes
 
 log = logging.getLogger("snmon")
@@ -93,7 +93,7 @@ class App:
                 self.trend.signals = Signals(
                     self.trend, self.bars, self.meta, self.trend_discord, self.watched, ROOT / "data" / "signals.json",
                     dump_pct=cfg.trend_signal_dump_pct, sim=lambda n, rao: self.feed.sim(True, n, rao),
-                    flow=self._flow, dry_run=cfg.dry_run)
+                    flow=self._flow, dry_run=cfg.dry_run, trigger=parse_trigger(cfg.trend_signal_window))
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
