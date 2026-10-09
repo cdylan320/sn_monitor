@@ -25,12 +25,12 @@ class _Meta:
 class World:
     """A tiny market: subnet 1 follows the script, subnet 2 stays flat."""
 
-    def __init__(self, trigger=SLOW):
+    def __init__(self, trigger=SLOW, bounce_pct=0.0):   # bounce off by default here; window tests unaffected
         tmp = Path(tempfile.mkdtemp())
         self.bars = Bars(tmp / "b.db")
         self.tm = TrendMonitor(parse_timeframes(TFS), self.bars, _Meta(), None, lambda n: True)
         self.sig = Signals(self.tm, self.bars, _Meta(), None, lambda n: True, tmp / "s.json", dry_run=True,
-                           trigger=parse_trigger(trigger))
+                           trigger=parse_trigger(trigger), bounce_pct=bounce_pct)
         self.b = 400_000
         self.fired = []
 
@@ -142,8 +142,8 @@ def test_seed_rebuilds_recent_signals_without_duplicates():
     asyncio.run(go())
 
 
-def _dumped(trigger):
-    w = World(trigger)
+def _dumped(trigger, bounce_pct=0.0):
+    w = World(trigger, bounce_pct=bounce_pct)
     w.run([P] * 600, live=False)
     w.run(ramp(P, P * 0.90, 72))                       # -10% over 6h
     w.run([P * 0.90] * 24)                             # 2h at the low
@@ -186,6 +186,28 @@ def test_what_is_already_rising_at_start_is_not_a_signal():
         w.run(ramp(P, P * 0.90, 72), live=False)       # dumped and already bouncing while the monitor was down
         w.run([P * 0.90 * 1.011, P * 0.90 * 1.022], live=False)
         w.run([P * 0.90 * 1.033])                      # first block after the restart: the rise is under way
+        assert w.fired == []
+    asyncio.run(go())
+
+
+def test_bounce_fires_on_a_sharp_v(tmp_path=None):
+    async def go():
+        w = World(FAST, bounce_pct=3.0)
+        w.run([P] * 600, live=False)
+        w.run(ramp(P, P * 0.88, 48), live=False)               # a 12% dump (context)
+        w.run([P * 0.88], live=True)                           # arm at the low
+        w.run([P * 0.88 * 1.04])                               # +4% in one candle off the low → bounce fires
+        assert len(w.fired) == 1 and w.fired[0].netuid == 1
+    asyncio.run(go())
+
+
+def test_bounce_off_is_window_only(tmp_path=None):
+    async def go():
+        w = World(FAST, bounce_pct=0.0)
+        w.run([P] * 600, live=False)
+        w.run(ramp(P, P * 0.88, 48), live=False)
+        w.run([P * 0.88], live=True)
+        w.run([P * 0.88 * 1.05])                               # single candle, bounce off → no signal
         assert w.fired == []
     asyncio.run(go())
 

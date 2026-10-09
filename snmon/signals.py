@@ -48,6 +48,7 @@ log = logging.getLogger("snmon.signals")
 
 DEFAULT_TRIGGER = "15m:2:0.8"
 LOOKBACK = 288          # buckets (24h) for the high the dump is measured from
+BOUNCE_LOW_BUCKETS = 12 # the bounce measures the rise from the lowest close of the last hour
 COOLDOWN = 144          # buckets (12h) between signals on one subnet: backtested 66% up vs 59% at 3h,
                         # and it stops re-signalling a subnet that keeps failing to bounce
 TRACK = 288             # buckets (24h) a signal is tracked
@@ -70,11 +71,12 @@ class Trigger:
 
 
 def parse_trigger(spec: str) -> Trigger:
-    """"15m:2:0.8" → Trigger. Window in minutes or hours (multiples of 5 minutes, at least 10m)."""
+    """"15m:2:0.8" → Trigger. Window in minutes or hours (multiples of 5 minutes, at least 15m:
+    the shape check needs three bars)."""
     parts = (spec or DEFAULT_TRIGGER).replace(" ", "").split(":")
     name = parts[0].lower()
     minutes = int(name[:-1]) * (60 if name.endswith("h") else 1)
-    if name[-1] not in "mh" or minutes % 5 or minutes < 10:
+    if name[-1] not in "mh" or minutes % 5 or minutes < 15:
         raise ValueError(f"TREND_SIGNAL_WINDOW: '{spec}' — use e.g. 15m, 30m or 1h")
     points = minutes // 5
     return Trigger(name, points, float(parts[1]) if len(parts) > 1 else 2.0,
@@ -105,11 +107,14 @@ class Sig:
 
 class Signals:
     def __init__(self, monitor, bars: Bars, meta, discord, watched, path: Path, dump_pct: float = 5.0,
-                 sim=None, flow=None, dry_run: bool = False, trigger: Trigger | None = None) -> None:
+                 sim=None, flow=None, dry_run: bool = False, trigger: Trigger | None = None,
+                 bounce_pct: float = 3.0) -> None:
         self.m = monitor
         self.trigger = trigger or parse_trigger(DEFAULT_TRIGGER)
+        self.bounce_pct = bounce_pct        # 0 = off; else also fire on a sharp bounce off the recent low
         self.fit = None                     # latest fit of the trigger window, every subnet
         self._st = np.zeros(NMAX, dtype=np.int8)   # 1 = the trigger window is up for this subnet
+        self._bounced: set[int] = set()     # subnets already bounced off their low (don't re-fire)
         self._armed = False                 # the first look only records what is already up
         self.bars = bars
         self.meta = meta
@@ -149,14 +154,36 @@ class Signals:
         st[flip] = 1
         return [int(n) for n in np.nonzero(flip)[0]]
 
+    def _bounced_off_low(self, bucket: int) -> list[int]:
+        """Subnets whose price just jumped ≥ bounce_pct off the lowest close of the last hour — the
+        sharp dump → pump "V" the steady-rise window skips. Re-arms when it falls back near the low."""
+        if self.bounce_pct <= 0:
+            return []
+        win = self.bars.closes(bucket, BOUNCE_LOW_BUCKETS, 1).astype(np.float64)   # (BUCKETS, subnets)
+        now = win[-1]
+        with np.errstate(invalid="ignore"):
+            lo = np.nanmin(win, axis=0)
+            rise = (now / lo - 1) * 100
+        out = []
+        for n in range(1, min(len(rise), NMAX)):
+            if np.isnan(rise[n]):
+                continue
+            if n in self._bounced and rise[n] < self.bounce_pct * 0.5:
+                self._bounced.discard(n)
+            if n not in self._bounced and rise[n] >= self.bounce_pct:
+                self._bounced.add(n)
+                out.append(n)
+        return out
+
     def detect(self, block: int) -> list[Sig]:
         bucket = block // BUCKET
         turned = self._turned_up(bucket)
-        if not self._armed:   # just started: what is already rising is not a fresh turn
+        bounced = self._bounced_off_low(bucket)
+        if not self._armed:   # just started: what is already rising/bounced is not a fresh signal
             self._armed = True
             return []
         out = []
-        for n in turned:
+        for n in dict.fromkeys(turned + bounced):   # a subnet that both turned and bounced fires once
             if n == 0 or not self.watched(n):
                 continue
             if bucket - self._last.get(n, -10**9) < COOLDOWN:
@@ -174,7 +201,7 @@ class Signals:
             self.posted += 1
             info = self.meta.info(n)
             print(fmt.bgreen(f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]} 🎯 SIGNAL   SN{n:<3} {info.name[:16]:<16} "
-                             f"dump {fmt.pct((low / high - 1) * 100)} → {self.trigger.name} turn up · entry {fmt.price(price * 1e9)} τ"))
+                             f"dump {fmt.pct((low / high - 1) * 100)} → reversal · entry {fmt.price(price * 1e9)} τ"))
             asyncio.create_task(self._post(sig))
         if out:
             self._save()
@@ -294,7 +321,9 @@ class Signals:
             "color": COLOR,
             "fields": fields,
             "image": {"url": "attachment://signal.png"},
-            "footer": {"text": f"Signal = price turns up (≥{self.trigger.enter:g}% over {self.trigger.name}) after a ≥{self.dump_pct:g}% drop from the 24h high · "
+            "footer": {"text": f"Signal = price turns up (≥{self.trigger.enter:g}% over {self.trigger.name})"
+                               + (f" or jumps ≥{self.bounce_pct:g}% off the 1h low" if self.bounce_pct > 0 else "")
+                               + f" after a ≥{self.dump_pct:g}% drop from the 24h high · "
                                f"tracked for 24h, this card updates with the result · block #{sig.block}"},
             "timestamp": datetime.fromtimestamp(sig.ts, timezone.utc).isoformat(),
         }
@@ -447,6 +476,7 @@ class Signals:
         st = np.zeros(w, dtype=np.int8)
         last: dict[int, int] = {}
         out = []
+        bounced = np.zeros(w, dtype=bool)
         for i in range(LOOKBACK, total):
             f = fit_all(closes[i - tf.points + 1:i + 1], ones)
             up = f.ok & (f.change >= tf.enter) & (f.r2 >= tf.r2) & (f.shape == 1)
@@ -454,9 +484,17 @@ class Signals:
             target = np.where(up, 1, np.where(dn, -1, 0)).astype(np.int8)
             st[(st != 0) & (~f.ok | (st * f.change < tf.enter * EXIT_FRACTION) | (f.r2 < EXIT_R2))] = 0
             flip = (target != 0) & (target != st)
-            ups = np.nonzero(flip & (target == 1))[0]
+            fire = flip & (target == 1)
+            if self.bounce_pct > 0:   # add the sharp bounce off the last-hour low
+                lowwin = closes[max(0, i - BOUNCE_LOW_BUCKETS + 1):i + 1]
+                with np.errstate(invalid="ignore"):
+                    rise = (closes[i] / np.nanmin(lowwin, axis=0) - 1) * 100
+                bounced[np.nan_to_num(rise) < self.bounce_pct * 0.5] = False
+                bfire = (rise >= self.bounce_pct) & ~bounced & ~np.isnan(rise)
+                bounced[rise >= self.bounce_pct] = True
+                fire = fire | bfire
             st[flip] = target[flip]
-            for n in ups:
+            for n in np.nonzero(fire)[0]:
                 n = int(n)
                 if n == 0 or not self.watched(n) or i - last.get(n, -10**9) < COOLDOWN:
                     continue

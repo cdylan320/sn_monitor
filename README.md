@@ -170,7 +170,8 @@ move, its steadiness, and rising bar after bar), so 100% means the signal fires.
 Each signal is then tracked for 24 hours. The card is edited with the result at +1h, +6h and +24h,
 and if the price closes below the invalidation level. The board lists the last 24 hours of signals,
 each with its % since entry. `TREND_SIGNALS=false` turns signals off, `TREND_SIGNAL_DUMP_PCT`
-sets the dump size and `TREND_SIGNAL_WINDOW` the trigger window.
+sets the dump size, `TREND_SIGNAL_WINDOW` the trigger window, and `TREND_SIGNAL_BOUNCE_PCT` (default 3) adds a
+second trigger that fires on a sharp jump off the 1-hour low (a dump→pump V the window skips; 0 = off).
 
 **Live trend board.** One message always sits at the bottom of the trend channel, listing every
 subnet that's trending right now:

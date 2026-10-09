@@ -93,7 +93,8 @@ class App:
                 self.trend.signals = Signals(
                     self.trend, self.bars, self.meta, self.trend_discord, self.watched, ROOT / "data" / "signals.json",
                     dump_pct=cfg.trend_signal_dump_pct, sim=lambda n, rao: self.feed.sim(True, n, rao),
-                    flow=self._flow, dry_run=cfg.dry_run, trigger=parse_trigger(cfg.trend_signal_window))
+                    flow=self._flow, dry_run=cfg.dry_run, trigger=parse_trigger(cfg.trend_signal_window),
+                    bounce_pct=cfg.trend_signal_bounce_pct)
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
