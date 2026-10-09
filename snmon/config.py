@@ -169,7 +169,7 @@ def load() -> Config:
         trend_signal_window=(os.getenv("TREND_SIGNAL_WINDOW") or "15m:2:0.8").strip(),
         trend_signal_bounce_pct=_float("TREND_SIGNAL_BOUNCE_PCT", 3.0),
         trend_signal_sharp_pct=_float("TREND_SIGNAL_SHARP_DUMP_PCT", 8.0),
-        trend_signal_tiny_pct=_float("TREND_SIGNAL_TINY_PUMP_PCT", 1.0),
+        trend_signal_tiny_pct=_float("TREND_SIGNAL_TINY_PUMP_PCT", 0.5),
         trend_signal_flow_tao=_float("TREND_SIGNAL_DUMP_FLOW_TAO", 0.0),
         trend_signal_flow_min_drop=_float("TREND_SIGNAL_DUMP_FLOW_MIN_DROP_PCT", 3.0),
         subnet_alerts=_bool("SUBNET_ALERTS", True),

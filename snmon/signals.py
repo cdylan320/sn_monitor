@@ -242,18 +242,30 @@ class Signals:
                 "flow": "big net sell-off"}
 
     def detect(self, block: int) -> list[Sig]:
+        """Price-driven triggers, evaluated on every block (the bar in progress included)."""
         bucket = block // BUCKET
         turned = self._turned_up(bucket)
         bounced = self._bounced_off_low(bucket)
         tiny = self._sharp_then_tiny(bucket)
-        sold = self._sold_off(bucket)
         if not self._armed:   # just started: what is already rising/bounced is not a fresh signal
             self._armed = True
             return []
         why: dict[int, str] = {}
-        for kind, ns in (("window", turned), ("bounce", bounced), ("tiny", tiny), ("flow", sold)):
+        for kind, ns in (("window", turned), ("bounce", bounced), ("tiny", tiny)):
             for n in ns:
                 why.setdefault(n, kind)           # a subnet that fires on several triggers fires once
+        return self._fire(why, block, bucket)
+
+    def detect_flow(self, block: int) -> list[Sig]:
+        """The big-sell-off trigger. Called by the app once the block's stake events are in the trade log, so
+        a sell-off posts on the very block it lands in (not on the next one)."""
+        bucket = block // BUCKET
+        sold = self._sold_off(bucket)
+        if not self._armed:     # what was already being sold at start is not a fresh sell-off
+            return []
+        return self._fire({n: "flow" for n in sold}, block, bucket)
+
+    def _fire(self, why: dict[int, str], block: int, bucket: int) -> list[Sig]:
         out = []
         for n in why:
             if n == 0 or not self.watched(n):

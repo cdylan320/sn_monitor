@@ -266,6 +266,11 @@ class App:
         if self.trade_log_start is None:
             self.trade_log_start = block.number
         self.trades_ready.setdefault(block.number, asyncio.Event()).set()
+        if self.trend and self.trend.ready and self.trend.signals:
+            try:   # a big sell-off is judged now, with this block's trades in the log — same block, no lag
+                self.trend.signals.detect_flow(block.number)
+            except Exception:
+                log.exception("flow signal check failed")
         for b in [b for b in self.trades if b < block.number - TRADE_LOG_BLOCKS]:
             self.trades.pop(b, None)
             self.trades_ready.pop(b, None)

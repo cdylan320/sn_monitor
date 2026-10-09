@@ -42,6 +42,7 @@ class World:
         self.tm.evaluate(block, silent=not live)
         if live:
             self.fired += self.sig.detect(block)
+            self.fired += self.sig.detect_flow(block)   # the app runs this once the block's trades are logged
             self.sig.update(block)
         self.b += 1
 
@@ -280,6 +281,16 @@ def test_backtest_replay_finds_the_tiny_pump_too():
         closes = w.bars.closes(w.b - 1, 3 * 288 + 288, 1).astype(np.float64)
         hits = await w.sig._triggers(closes)
         assert len(hits) == 1 and abs(hits[0][2] / (P * 0.90 * 1.012 / 1e9) - 1) < 1e-6   # same entry as live
+    asyncio.run(go())
+
+
+def test_a_half_percent_pump_after_a_sharp_dump_is_enough():
+    async def go():
+        w = _sharp(sharp_pct=8.0, tiny_pct=0.5)
+        w.run([P * 0.90 * 1.003])
+        assert w.fired == []                                           # +0.3%: not yet
+        w.run([P * 0.90 * 1.006])
+        assert len(w.fired) == 1 and w.fired[0].why == "tiny"          # +0.6% off the low → posted on that block
     asyncio.run(go())
 
 
