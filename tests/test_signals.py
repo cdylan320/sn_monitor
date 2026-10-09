@@ -323,20 +323,40 @@ def test_bounce_is_measured_off_the_lowest_price_inside_a_bar():
     asyncio.run(go())
 
 
-def test_the_spacing_between_signals_is_configurable():
+def test_no_waiting_between_signals_but_one_card_per_move():
+    async def go():
+        w = World(FAST, bounce_pct=3.0)
+        assert w.sig.cooldown == 0                                   # no time spacing by default
+        w.run([P] * 600, live=False)
+        w.run([P * 0.92] * 24, live=False)
+        w.run([P * 0.92], live=True)                                  # arm the detector
+        base = w.b * BUCKET
+
+        def block(offset, price):
+            w.bars.update(base + offset, {1: int(price), 2: P})
+            w.tm.evaluate(base + offset)
+            return w.sig.detect(base + offset)
+
+        assert block(0, P * 0.90) == []                               # a dip to −10% for one block
+        first = block(1, P * 0.90 * 1.035)                            # +3.5% off the real low in one block
+        assert [(x.netuid, x.why) for x in first] == [(1, "bounce")]
+        assert block(2, P * 0.90 * 1.05) == [] and block(3, P * 0.90 * 1.06) == []   # same pump, still running: no second card
+        assert block(4, P * 0.90 * 0.99) == []                        # it dumps >3% from the high — the move is over
+        second = block(5, P * 0.90 * 0.99 * 1.04)                     # …and pumps again a few seconds later
+        assert [(x.netuid, x.why) for x in second] == [(1, "bounce")]  # a new signal, no 12h wait
+        assert len(w.sig.active) == 2
+    asyncio.run(go())
+
+
+def test_a_time_spacing_can_still_be_set():
     async def go():
         w = _sharp(sharp_pct=8.0, tiny_pct=0.5)
-        assert w.sig.cooldown == 144                                  # 12h by default
-        short = World(FAST, sharp_pct=8.0, tiny_pct=0.5)
-        short.sig.cooldown = 12                                       # 1h
-        short.run([P] * 600, live=False)
-        short.run([P * 0.98, P * 0.95, P * 0.92, P * 0.90], live=False)
-        short.run([P * 0.90], live=True)
-        short.run([P * 0.90 * 1.006])
-        assert len(short.fired) == 1
-        short.run([P * 0.97, P * 0.93, P * 0.90 * 0.95, P * 0.85] + [P * 0.85] * 12)       # falls again, an hour+ later
-        short.run([P * 0.85 * 1.006])
-        assert len(short.fired) == 2                                  # allowed again after the shorter spacing
+        w.sig.cooldown = 144                                          # 12h, if you ever want it
+        w.run([P * 0.90 * 1.006])
+        assert len(w.fired) == 1
+        w.run([P * 0.97, P * 0.93, P * 0.90 * 0.95, P * 0.85] + [P * 0.85] * 6)
+        w.run([P * 0.85 * 1.006])
+        assert len(w.fired) == 1                                      # inside the spacing: blocked even after a fresh fall
     asyncio.run(go())
 
 

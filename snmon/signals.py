@@ -113,11 +113,16 @@ class Signals:
                  sim=None, flow=None, dry_run: bool = False, trigger: Trigger | None = None,
                  bounce_pct: float = 3.0, sharp_pct: float = 8.0, tiny_pct: float = 1.0,
                  flow_tao: float = 0.0, flow_min_drop: float = 3.0, flow_all=None,
-                 cooldown_hours: float = 12.0) -> None:
+                 cooldown_hours: float = 0.0, rearm_pct: float = 3.0) -> None:
         self.m = monitor
         self.trigger = trigger or parse_trigger(DEFAULT_TRIGGER)
         self.bounce_pct = bounce_pct        # 0 = off; else also fire on a sharp bounce off the recent low
-        self.cooldown = round(cooldown_hours * 12)   # buckets between signals on one subnet
+        self.cooldown = round(cooldown_hours * 12)   # buckets between signals on one subnet (0 = no waiting)
+        # One move = one signal: after a signal a subnet is silent until its price has FALLEN rearm_pct from the
+        # highest since (a fresh dump); then its next small pump is a new signal, minutes later if that is when it
+        # happens. 0 = every trigger always fires.
+        self.rearm_pct = rearm_pct
+        self._after: dict[int, float] = {}          # netuid → highest price since its last signal (move still running)
         self.fit = None                     # latest fit of the trigger window, every subnet
         self._st = np.zeros(NMAX, dtype=np.int8)   # 1 = the trigger window is up for this subnet
         self._bounced: set[int] = set()     # subnets already bounced off their low (don't re-fire)
@@ -246,6 +251,7 @@ class Signals:
     def detect(self, block: int) -> list[Sig]:
         """Price-driven triggers, evaluated on every block (the bar in progress included)."""
         bucket = block // BUCKET
+        self._episode_tick(bucket)
         turned = self._turned_up(bucket)
         bounced = self._bounced_off_low(bucket)
         tiny = self._sharp_then_tiny(bucket)
@@ -267,6 +273,20 @@ class Signals:
             return []
         return self._fire({n: "flow" for n in sold}, block, bucket)
 
+    def _episode_tick(self, bucket: int) -> None:
+        """Track each recently-signalled subnet's highest price; once it has fallen rearm_pct from it the move
+        is over and the subnet may signal again."""
+        if not self._after:
+            return
+        now = self.bars.closes(bucket, 1, 1)[0].astype(np.float64)
+        for n in list(self._after):
+            px = now[n] if n < len(now) else np.nan
+            if np.isnan(px) or px <= 0:
+                continue
+            peak = self._after[n] = max(self._after[n], float(px))
+            if self.rearm_pct > 0 and px <= peak * (1 - self.rearm_pct / 100):
+                del self._after[n]
+
     def _fire(self, why: dict[int, str], block: int, bucket: int) -> list[Sig]:
         out = []
         for n in why:
@@ -274,6 +294,8 @@ class Signals:
                 continue
             if bucket - self._last.get(n, -10**9) < self.cooldown:
                 continue
+            if self.rearm_pct > 0 and n in self._after:
+                continue   # the move that already signalled is still running — not a new signal
             lv = self.levels(bucket, n)
             if lv is None:
                 continue
@@ -282,6 +304,7 @@ class Signals:
                 continue  # not coming out of a dump
             sig = Sig(n, bucket, block, time.time(), price, high, low, why=why[n])
             self._last[n] = bucket
+            self._after[n] = float(price)
             self.active.append(sig)
             out.append(sig)
             self.posted += 1
@@ -572,11 +595,16 @@ class Signals:
         last: dict[int, int] = {}
         out = []
         bounced = np.zeros(w, dtype=bool)
+        after = np.full(w, np.nan)                 # highest price since each subnet's last signal (move still running)
         t_armed = np.zeros(w, dtype=bool)          # dump → tiny uptick, replayed bar by bar
         t_dumped = np.zeros(w, dtype=bool)
         t_low = np.full(w, np.nan)
         t_at = np.zeros(w, dtype=int)
         for i in range(LOOKBACK, total):
+            if self.rearm_pct > 0:   # a signalled move ends when price has fallen rearm_pct from its high since
+                live = ~np.isnan(after) & ~np.isnan(closes[i])
+                after[live] = np.fmax(after[live], closes[i][live])
+                after[live & (closes[i] <= after * (1 - self.rearm_pct / 100))] = np.nan
             f = fit_all(closes[i - tf.points + 1:i + 1], ones)
             up = f.ok & (f.change >= tf.enter) & (f.r2 >= tf.r2) & (f.shape == 1)
             dn = f.ok & (f.change <= -tf.enter) & (f.r2 >= tf.r2) & (f.shape == -1)
@@ -615,10 +643,13 @@ class Signals:
                 n = int(n)
                 if n == 0 or not self.watched(n) or i - last.get(n, -10**9) < self.cooldown:
                     continue
+                if self.rearm_pct > 0 and not np.isnan(after[n]):
+                    continue
                 win = closes[i - LOOKBACK:i + 1, n]
                 if np.isnan(win).any() or (win[-1] / win.max() - 1) * 100 > -self.dump_pct:
                     continue
                 last[n] = i
+                after[n] = closes[i][n]
                 i_hi = int(win.argmax())
                 out.append((i, n, float(win[-1]), float(win[i_hi]), float(win[i_hi:].min())))
             if i % 25 == 0:
@@ -666,6 +697,13 @@ class Signals:
         if added:
             self.update(end_bucket * BUCKET + BUCKET - 1)
             self._save()
+        if self.rearm_pct > 0:   # a move that signalled before the restart and is still running stays one signal
+            self._after.clear()
+            for sig in self.active:
+                path = self.bars.closes(end_bucket, max(end_bucket - sig.bucket, 0) + 1, 1)[:, sig.netuid].astype(np.float64)
+                path = path[~np.isnan(path)]
+                if len(path) and path[-1] > path.max() * (1 - self.rearm_pct / 100):
+                    self._after[sig.netuid] = float(path.max())
         return added
 
     # ── persistence ──────────────────────────────────────────────────────

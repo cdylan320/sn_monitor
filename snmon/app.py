@@ -97,7 +97,7 @@ class App:
                     bounce_pct=cfg.trend_signal_bounce_pct, sharp_pct=cfg.trend_signal_sharp_pct,
                     tiny_pct=cfg.trend_signal_tiny_pct, flow_tao=cfg.trend_signal_flow_tao,
                     flow_min_drop=cfg.trend_signal_flow_min_drop, flow_all=self._flow_all,
-                    cooldown_hours=cfg.trend_signal_cooldown_hours)
+                    cooldown_hours=cfg.trend_signal_cooldown_hours, rearm_pct=cfg.trend_signal_rearm_pct)
 
     # ── lifecycle ────────────────────────────────────────────────────────
 

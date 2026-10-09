@@ -110,6 +110,7 @@ class Config:
     trend_signal_flow_tao: float
     trend_signal_flow_min_drop: float
     trend_signal_cooldown_hours: float
+    trend_signal_rearm_pct: float
     subnet_alerts: bool
     subnet_webhook_url: str
     news_webhook_url: str
@@ -173,7 +174,8 @@ def load() -> Config:
         trend_signal_tiny_pct=_float("TREND_SIGNAL_TINY_PUMP_PCT", 0.5),
         trend_signal_flow_tao=_float("TREND_SIGNAL_DUMP_FLOW_TAO", 0.0),
         trend_signal_flow_min_drop=_float("TREND_SIGNAL_DUMP_FLOW_MIN_DROP_PCT", 3.0),
-        trend_signal_cooldown_hours=_float("TREND_SIGNAL_COOLDOWN_HOURS", 12.0),
+        trend_signal_cooldown_hours=_float("TREND_SIGNAL_COOLDOWN_HOURS", 0.0),
+        trend_signal_rearm_pct=_float("TREND_SIGNAL_REARM_PCT", 3.0),
         subnet_alerts=_bool("SUBNET_ALERTS", True),
         # subnet lifecycle alerts go to the news channel (their own webhook if set; price channel as last resort)
         subnet_webhook_url=(os.getenv("SUBNET_WEB_HOOK_URL") or "").strip() or news_webhook or webhook,
