@@ -112,10 +112,12 @@ class Signals:
     def __init__(self, monitor, bars: Bars, meta, discord, watched, path: Path, dump_pct: float = 5.0,
                  sim=None, flow=None, dry_run: bool = False, trigger: Trigger | None = None,
                  bounce_pct: float = 3.0, sharp_pct: float = 8.0, tiny_pct: float = 1.0,
-                 flow_tao: float = 0.0, flow_min_drop: float = 3.0, flow_all=None) -> None:
+                 flow_tao: float = 0.0, flow_min_drop: float = 3.0, flow_all=None,
+                 cooldown_hours: float = 12.0) -> None:
         self.m = monitor
         self.trigger = trigger or parse_trigger(DEFAULT_TRIGGER)
         self.bounce_pct = bounce_pct        # 0 = off; else also fire on a sharp bounce off the recent low
+        self.cooldown = round(cooldown_hours * 12)   # buckets between signals on one subnet
         self.fit = None                     # latest fit of the trigger window, every subnet
         self._st = np.zeros(NMAX, dtype=np.int8)   # 1 = the trigger window is up for this subnet
         self._bounced: set[int] = set()     # subnets already bounced off their low (don't re-fire)
@@ -171,10 +173,10 @@ class Signals:
         sharp dump → pump "V" the steady-rise window skips. Re-arms when it falls back near the low."""
         if self.bounce_pct <= 0:
             return []
-        win = self.bars.closes(bucket, BOUNCE_LOW_BUCKETS, 1).astype(np.float64)   # (BUCKETS, subnets)
-        now = win[-1]
+        _, _, lows, closes = self.bars.candles(bucket, BOUNCE_LOW_BUCKETS, 1)       # each (BUCKETS, subnets)
+        now = closes[-1].astype(np.float64)
         with np.errstate(invalid="ignore"):
-            lo = np.nanmin(win, axis=0)
+            lo = np.nanmin(np.fmin(lows, closes).astype(np.float64), axis=0)         # lowest price seen, dips inside bars included
             rise = (now / lo - 1) * 100
         out = []
         for n in range(1, min(len(rise), NMAX)):
@@ -270,7 +272,7 @@ class Signals:
         for n in why:
             if n == 0 or not self.watched(n):
                 continue
-            if bucket - self._last.get(n, -10**9) < COOLDOWN:
+            if bucket - self._last.get(n, -10**9) < self.cooldown:
                 continue
             lv = self.levels(bucket, n)
             if lv is None:
@@ -493,7 +495,7 @@ class Signals:
         for n in range(1, min(closes.shape[1], len(f.ok))):
             if np.isnan(dd[n]) or dd[n] > -self.dump_pct or not f.ok[n] or not self.watched(n):
                 continue
-            if bucket - self._last.get(n, -10**9) < COOLDOWN or self._st[n] == 1:
+            if bucket - self._last.get(n, -10**9) < self.cooldown or self._st[n] == 1:
                 continue
             # a signal needs the line to move enough AND steadily AND to rise bar after bar:
             # readiness is the weakest of those, so 100% really means "fires now"
@@ -611,7 +613,7 @@ class Signals:
             st[flip] = target[flip]
             for n in np.nonzero(fire)[0]:
                 n = int(n)
-                if n == 0 or not self.watched(n) or i - last.get(n, -10**9) < COOLDOWN:
+                if n == 0 or not self.watched(n) or i - last.get(n, -10**9) < self.cooldown:
                     continue
                 win = closes[i - LOOKBACK:i + 1, n]
                 if np.isnan(win).any() or (win[-1] / win.max() - 1) * 100 > -self.dump_pct:

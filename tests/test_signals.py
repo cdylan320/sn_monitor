@@ -145,6 +145,15 @@ def test_seed_rebuilds_recent_signals_without_duplicates():
     asyncio.run(go())
 
 
+async def _card(sig, timeout=15.0):
+    """The card (with its chart) is built in the background — wait for it, however busy the machine is."""
+    for _ in range(int(timeout / 0.05)):
+        if sig.embed:
+            return sig.embed
+        await asyncio.sleep(0.05)
+    raise AssertionError("the signal card was never built")
+
+
 def _dumped(trigger, bounce_pct=0.0):
     w = World(trigger, bounce_pct=bounce_pct)
     w.run([P] * 600, live=False)
@@ -164,8 +173,8 @@ def test_15m_trigger_fires_on_the_second_rising_bar():
         assert len(fast.fired) == 1 and slow.fired == []   # 10 minutes into the bounce; the 1h window is nowhere near
         s = fast.fired[0]
         assert abs(s.entry / (P * 0.90 * 1.022 / 1e9) - 1) < 1e-6 and (s.entry / s.high - 1) * 100 <= -5
-        await asyncio.sleep(0.3)
-        assert "(15m)" in s.embed["description"] and "over 15m" in s.embed["footer"]["text"]
+        emb = await _card(s)
+        assert "(15m)" in emb["description"] and "over 15m" in emb["footer"]["text"]
         fast.run([P * 0.90 * 1.022 * (1.01 ** i) for i in range(1, 12)])
         assert len(fast.fired) == 1, "once per subnet per 12 hours, however long it keeps rising"
     asyncio.run(go())
@@ -231,8 +240,8 @@ def test_tiny_uptick_after_a_sharp_dump_fires_on_the_first_small_pump():
         assert w.fired == [], "+0.4% is below the 1% bar"
         w.run([P * 0.90 * 1.012])
         assert len(w.fired) == 1 and w.fired[0].why == "tiny", "fires on the first +1% — no 15m window"
-        await asyncio.sleep(0.3)
-        assert "first uptick after a sharp dump" in w.fired[0].embed["description"]
+        emb = await _card(w.fired[0])
+        assert "first uptick after a sharp dump" in emb["description"]
     asyncio.run(go())
 
 
@@ -291,6 +300,43 @@ def test_a_half_percent_pump_after_a_sharp_dump_is_enough():
         assert w.fired == []                                           # +0.3%: not yet
         w.run([P * 0.90 * 1.006])
         assert len(w.fired) == 1 and w.fired[0].why == "tiny"          # +0.6% off the low → posted on that block
+    asyncio.run(go())
+
+
+def test_bounce_is_measured_off_the_lowest_price_inside_a_bar():
+    async def go():
+        w = World(FAST, bounce_pct=3.0)
+        w.run([P] * 600, live=False)
+        w.run([P * 0.92] * 24, live=False)                            # parked at −8% (the bar closes)
+        w.run([P * 0.92], live=True)                                  # arm the detector
+        base = w.b * BUCKET
+
+        def block(offset, price):                                     # a live block inside one 5-minute bar
+            w.bars.update(base + offset, {1: int(price), 2: P})
+            w.tm.evaluate(base + offset)
+            return w.sig.detect(base + offset)
+
+        assert block(0, P * 0.90) == []                               # a dip to −10% for one block
+        assert block(3, P * 0.90 * 1.005) == []                       # +0.5% off that low: not yet
+        got = block(6, P * 0.90 * 1.032)                              # +3.2% off the real low (only +0.8% off the 0.92P closes)
+        assert [(x.netuid, x.why) for x in got] == [(1, "bounce")]
+    asyncio.run(go())
+
+
+def test_the_spacing_between_signals_is_configurable():
+    async def go():
+        w = _sharp(sharp_pct=8.0, tiny_pct=0.5)
+        assert w.sig.cooldown == 144                                  # 12h by default
+        short = World(FAST, sharp_pct=8.0, tiny_pct=0.5)
+        short.sig.cooldown = 12                                       # 1h
+        short.run([P] * 600, live=False)
+        short.run([P * 0.98, P * 0.95, P * 0.92, P * 0.90], live=False)
+        short.run([P * 0.90], live=True)
+        short.run([P * 0.90 * 1.006])
+        assert len(short.fired) == 1
+        short.run([P * 0.97, P * 0.93, P * 0.90 * 0.95, P * 0.85] + [P * 0.85] * 12)       # falls again, an hour+ later
+        short.run([P * 0.85 * 1.006])
+        assert len(short.fired) == 2                                  # allowed again after the shorter spacing
     asyncio.run(go())
 
 
