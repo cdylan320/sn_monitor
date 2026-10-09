@@ -1,5 +1,6 @@
 """Run: .venv/bin/python tests/test_signals.py"""
 import asyncio
+import numpy as np
 import os
 import sys
 import tempfile
@@ -25,12 +26,13 @@ class _Meta:
 class World:
     """A tiny market: subnet 1 follows the script, subnet 2 stays flat."""
 
-    def __init__(self, trigger=SLOW, bounce_pct=0.0):   # bounce off by default here; window tests unaffected
+    def __init__(self, trigger=SLOW, bounce_pct=0.0, sharp_pct=0.0, tiny_pct=1.0, flow_tao=0.0, flow_all=None):   # new triggers off unless a test asks
         tmp = Path(tempfile.mkdtemp())
         self.bars = Bars(tmp / "b.db")
         self.tm = TrendMonitor(parse_timeframes(TFS), self.bars, _Meta(), None, lambda n: True)
         self.sig = Signals(self.tm, self.bars, _Meta(), None, lambda n: True, tmp / "s.json", dry_run=True,
-                           trigger=parse_trigger(trigger), bounce_pct=bounce_pct)
+                           trigger=parse_trigger(trigger), bounce_pct=bounce_pct, sharp_pct=sharp_pct,
+                           tiny_pct=tiny_pct, flow_tao=flow_tao, flow_all=flow_all)
         self.b = 400_000
         self.fired = []
 
@@ -209,6 +211,75 @@ def test_bounce_off_is_window_only(tmp_path=None):
         w.run([P * 0.88], live=True)
         w.run([P * 0.88 * 1.05])                               # single candle, bounce off → no signal
         assert w.fired == []
+    asyncio.run(go())
+
+
+def _sharp(**kw):
+    w = World(FAST, **kw)
+    w.run([P] * 600, live=False)
+    w.run([P * 0.98, P * 0.95, P * 0.92, P * 0.90], live=False)       # −10% in 20 minutes, history
+    w.run([P * 0.90], live=True)                                      # arm at the low
+    return w
+
+
+def test_tiny_uptick_after_a_sharp_dump_fires_on_the_first_small_pump():
+    async def go():
+        w = _sharp(sharp_pct=8.0, tiny_pct=1.0)
+        assert w.fired == []
+        w.run([P * 0.90 * 1.004])
+        assert w.fired == [], "+0.4% is below the 1% bar"
+        w.run([P * 0.90 * 1.012])
+        assert len(w.fired) == 1 and w.fired[0].why == "tiny", "fires on the first +1% — no 15m window"
+        await asyncio.sleep(0.3)
+        assert "first uptick after a sharp dump" in w.fired[0].embed["description"]
+    asyncio.run(go())
+
+
+def test_tiny_pump_ignores_slow_bleeds_and_small_dumps():
+    async def go():
+        slow = World(FAST, sharp_pct=8.0, tiny_pct=1.0)
+        slow.run([P] * 600, live=False)
+        slow.run(ramp(P, P * 0.88, 72), live=False)
+        slow.run([P * 0.88], live=True)
+        slow.run([P * 0.88 * 1.02])
+        assert slow.fired == [] and not slow.sig._dumps               # −12% over 6h is not a sharp dump
+        small = World(FAST, sharp_pct=8.0, tiny_pct=1.0)
+        small.run([P] * 600, live=False)
+        small.run([P * 0.98, P * 0.96, P * 0.94], live=False)         # −6%: under the bar
+        small.run([P * 0.94], live=True)
+        small.run([P * 0.94 * 1.02])
+        assert small.fired == []
+    asyncio.run(go())
+
+
+def test_big_net_selloff_is_a_signal_only_when_switched_on_and_the_price_fell():
+    async def go():
+        net = {}
+        on = World(FAST, flow_tao=500.0, flow_all=lambda: dict(net))
+        on.run([P] * 600, live=False)
+        on.run([P * 0.97, P * 0.95], live=False)                      # SN1 −5% (a real move); SN2 flat
+        on.run([P * 0.95], live=True)                                 # the first live look only arms the detector
+        assert on.fired == []
+        net.update({1: -700.0, 2: -900.0})                            # SN1 sells 700 τ net, SN2 900 τ — now, live
+        on.run([P * 0.95])
+        assert [(x.netuid, x.why) for x in on.fired] == [(1, "flow")]  # SN2's 900 τ moved nothing: no signal
+        on.run([P * 0.95])
+        assert len(on.fired) == 1                                    # and not twice for the same sell-off
+        off = World(FAST, flow_tao=0.0, flow_all=lambda: dict(net))
+        off.run([P] * 600, live=False); off.run([P * 0.95], live=True); off.run([P * 0.95])
+        assert off.fired == []                                       # default: off
+    asyncio.run(go())
+
+
+def test_backtest_replay_finds_the_tiny_pump_too():
+    async def go():
+        w = World(FAST, sharp_pct=8.0, tiny_pct=1.0)
+        w.run([P] * 600, live=False)
+        w.run([P * 0.98, P * 0.95, P * 0.92, P * 0.90, P * 0.90 * 1.012], live=False)
+        w.run([P * 0.90 * 1.012] * 300, live=False)
+        closes = w.bars.closes(w.b - 1, 3 * 288 + 288, 1).astype(np.float64)
+        hits = await w.sig._triggers(closes)
+        assert len(hits) == 1 and abs(hits[0][2] / (P * 0.90 * 1.012 / 1e9) - 1) < 1e-6   # same entry as live
     asyncio.run(go())
 
 

@@ -94,7 +94,9 @@ class App:
                     self.trend, self.bars, self.meta, self.trend_discord, self.watched, ROOT / "data" / "signals.json",
                     dump_pct=cfg.trend_signal_dump_pct, sim=lambda n, rao: self.feed.sim(True, n, rao),
                     flow=self._flow, dry_run=cfg.dry_run, trigger=parse_trigger(cfg.trend_signal_window),
-                    bounce_pct=cfg.trend_signal_bounce_pct)
+                    bounce_pct=cfg.trend_signal_bounce_pct, sharp_pct=cfg.trend_signal_sharp_pct,
+                    tiny_pct=cfg.trend_signal_tiny_pct, flow_tao=cfg.trend_signal_flow_tao,
+                    flow_min_drop=cfg.trend_signal_flow_min_drop, flow_all=self._flow_all)
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -472,6 +474,15 @@ class App:
             finally:
                 for r in hist:
                     await r.stop()
+
+    def _flow_all(self, blocks: int = 300) -> dict[int, float]:
+        """Net TAO staked (+) / unstaked (−) per subnet over the last hour, from the per-block trade log."""
+        head = self.feed.last_number
+        net: dict[int, float] = {}
+        for b in range(head - blocks + 1, head + 1):
+            for t in self.trades.get(b, ()):
+                net[t.netuid] = net.get(t.netuid, 0.0) + (t.tao if t.buy else -t.tao)
+        return net
 
     def _flow(self, netuid: int, blocks: int = 300):
         """(net TAO, buys, sells) on a subnet over the last hour, from the per-block trade log."""

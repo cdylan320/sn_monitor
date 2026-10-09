@@ -49,6 +49,8 @@ log = logging.getLogger("snmon.signals")
 DEFAULT_TRIGGER = "15m:2:0.8"
 LOOKBACK = 288          # buckets (24h) for the high the dump is measured from
 BOUNCE_LOW_BUCKETS = 12 # the bounce measures the rise from the lowest close of the last hour
+SHARP_BUCKETS = 12      # a "sharp dump" is a fall within the last hour
+SHARP_WAIT_BUCKETS = 24 # after a sharp dump, wait at most 2h for the first uptick
 COOLDOWN = 144          # buckets (12h) between signals on one subnet: backtested 66% up vs 59% at 3h,
                         # and it stops re-signalling a subnet that keeps failing to bounce
 TRACK = 288             # buckets (24h) a signal is tracked
@@ -100,6 +102,7 @@ class Sig:
     invalidated: int | None = None             # bucket of the first 5-min close below `low`
     done: bool = False
     embed: dict | None = None                  # the posted card, for later edits
+    why: str = ""                              # which trigger fired: window / bounce / tiny / flow
 
     def age(self, bucket: int) -> int:
         return bucket - self.bucket
@@ -108,13 +111,22 @@ class Sig:
 class Signals:
     def __init__(self, monitor, bars: Bars, meta, discord, watched, path: Path, dump_pct: float = 5.0,
                  sim=None, flow=None, dry_run: bool = False, trigger: Trigger | None = None,
-                 bounce_pct: float = 3.0) -> None:
+                 bounce_pct: float = 3.0, sharp_pct: float = 8.0, tiny_pct: float = 1.0,
+                 flow_tao: float = 0.0, flow_min_drop: float = 3.0, flow_all=None) -> None:
         self.m = monitor
         self.trigger = trigger or parse_trigger(DEFAULT_TRIGGER)
         self.bounce_pct = bounce_pct        # 0 = off; else also fire on a sharp bounce off the recent low
         self.fit = None                     # latest fit of the trigger window, every subnet
         self._st = np.zeros(NMAX, dtype=np.int8)   # 1 = the trigger window is up for this subnet
         self._bounced: set[int] = set()     # subnets already bounced off their low (don't re-fire)
+        # dump → first small pump: a fall of sharp_pct within the hour arms a subnet; the first tiny_pct rise
+        # off the post-dump low fires it — on every block, with no 15-minute window to wait for
+        self.sharp_pct, self.tiny_pct = sharp_pct, tiny_pct
+        self._dumps: dict[int, list] = {}   # netuid → [bucket armed in, lowest price since]
+        self._dumped: set[int] = set()      # subnets whose current dump already armed (until it recovers)
+        # a big net sell-off is itself the signal (off by default): flow_all() → {netuid: net TAO over the last hour}
+        self.flow_tao, self.flow_min_drop, self.flow_all = flow_tao, flow_min_drop, flow_all
+        self._flowed: set[int] = set()
         self._armed = False                 # the first look only records what is already up
         self.bars = bars
         self.meta = meta
@@ -175,15 +187,75 @@ class Signals:
                 out.append(n)
         return out
 
+    def _sharp_then_tiny(self, bucket: int) -> list[int]:
+        """Dump → small pump, immediately: armed by a ≥ sharp_pct fall within the last hour, fires on the
+        first tiny_pct rise off the lowest price since (bar in progress included)."""
+        if self.sharp_pct <= 0 or self.tiny_pct <= 0:
+            return []
+        win = self.bars.closes(bucket, SHARP_BUCKETS + 1, 1).astype(np.float64)
+        now = win[-1]
+        with np.errstate(invalid="ignore"):
+            hi = np.nanmax(win, axis=0)
+            drop = (now / hi - 1) * 100
+        out = []
+        for n in range(1, min(len(drop), NMAX)):
+            if np.isnan(drop[n]):
+                continue
+            if n in self._dumped and drop[n] > -self.sharp_pct / 2:
+                self._dumped.discard(n)              # it recovered: the next dump is a new episode
+            d = self._dumps.get(n)
+            if d is None:
+                if drop[n] <= -self.sharp_pct and n not in self._dumped:
+                    self._dumps[n] = [bucket, float(now[n])]
+                    self._dumped.add(n)
+                continue
+            if bucket - d[0] > SHARP_WAIT_BUCKETS:
+                del self._dumps[n]                   # no uptick within 2h: forget it
+                continue
+            d[1] = min(d[1], float(now[n]))
+            if (now[n] / d[1] - 1) * 100 >= self.tiny_pct:
+                del self._dumps[n]
+                out.append(n)
+        return out
+
+    def _sold_off(self, bucket: int) -> list[int]:
+        """A big sell-off as the signal: ≥ flow_tao net sold on a subnet in the last hour AND its price
+        really fell ≥ flow_min_drop% (a whale leaving a deep pool moves nothing). Off when flow_tao is 0."""
+        if self.flow_tao <= 0 or self.flow_all is None:
+            return []
+        win = self.bars.closes(bucket, SHARP_BUCKETS + 1, 1).astype(np.float64)
+        now = win[-1]
+        with np.errstate(invalid="ignore"):
+            hi = np.nanmax(win, axis=0)
+        out = []
+        for n, tao in self.flow_all().items():
+            if n in self._flowed and tao > -self.flow_tao / 2:
+                self._flowed.discard(n)
+            if tao > -self.flow_tao or n in self._flowed or n <= 0 or n >= len(now) or np.isnan(now[n]):
+                continue
+            if (now[n] / hi[n] - 1) * 100 <= -self.flow_min_drop:
+                self._flowed.add(n)
+                out.append(n)
+        return out
+
+    WHY_TEXT = {"window": "turned up", "bounce": "jumped off the 1h low", "tiny": "first uptick after a sharp dump",
+                "flow": "big net sell-off"}
+
     def detect(self, block: int) -> list[Sig]:
         bucket = block // BUCKET
         turned = self._turned_up(bucket)
         bounced = self._bounced_off_low(bucket)
+        tiny = self._sharp_then_tiny(bucket)
+        sold = self._sold_off(bucket)
         if not self._armed:   # just started: what is already rising/bounced is not a fresh signal
             self._armed = True
             return []
+        why: dict[int, str] = {}
+        for kind, ns in (("window", turned), ("bounce", bounced), ("tiny", tiny), ("flow", sold)):
+            for n in ns:
+                why.setdefault(n, kind)           # a subnet that fires on several triggers fires once
         out = []
-        for n in dict.fromkeys(turned + bounced):   # a subnet that both turned and bounced fires once
+        for n in why:
             if n == 0 or not self.watched(n):
                 continue
             if bucket - self._last.get(n, -10**9) < COOLDOWN:
@@ -194,14 +266,14 @@ class Signals:
             price, high, low = lv
             if (price / high - 1) * 100 > -self.dump_pct:
                 continue  # not coming out of a dump
-            sig = Sig(n, bucket, block, time.time(), price, high, low)
+            sig = Sig(n, bucket, block, time.time(), price, high, low, why=why[n])
             self._last[n] = bucket
             self.active.append(sig)
             out.append(sig)
             self.posted += 1
             info = self.meta.info(n)
             print(fmt.bgreen(f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]} 🎯 SIGNAL   SN{n:<3} {info.name[:16]:<16} "
-                             f"dump {fmt.pct((low / high - 1) * 100)} → reversal · entry {fmt.price(price * 1e9)} τ"))
+                             f"dump {fmt.pct((low / high - 1) * 100)} → {self.WHY_TEXT.get(why[n], 'reversal')} · entry {fmt.price(price * 1e9)} τ"))
             asyncio.create_task(self._post(sig))
         if out:
             self._save()
@@ -274,6 +346,13 @@ class Signals:
             text += f"\n❌ Closed below the invalidation level {after} after the signal."
         return text
 
+    def _why_line(self, sig: Sig) -> str:
+        if sig.why == "window" or not sig.why:
+            return f"turned up ({self.trigger.name})"
+        if sig.why == "flow":
+            return f"big net sell-off (≥{self.flow_tao:g} τ sold in 1h)"
+        return self.WHY_TEXT.get(sig.why, sig.why)
+
     async def _card(self, sig: Sig) -> tuple[dict, bytes]:
         n = sig.netuid
         info = self.meta.info(n)
@@ -284,7 +363,7 @@ class Signals:
         _, _, to_stop = fmt.move(entry, lo)
         _, _, to_high = fmt.move(entry, hi)
         desc = (f"```diff\n- dump    {d_a} τ → {d_b} τ  ({fmt.pct(d_pc)})\n"
-                f"+ bounce  {b_a} τ → {b_b} τ  ({fmt.pct(b_pc)})  ← turned up ({self.trigger.name})\n```")
+                f"+ bounce  {b_a} τ → {b_b} τ  ({fmt.pct(b_pc)})  ← {self._why_line(sig)}\n```")
         fields = [
             {"name": "Entry (now)", "value": f"**{fmt.price(entry)} τ**", "inline": True},
             {"name": "Invalidation", "value": f"**{fmt.price(lo)} τ** ({fmt.pct(to_stop)})\nclose below the dump's low",
@@ -323,6 +402,8 @@ class Signals:
             "image": {"url": "attachment://signal.png"},
             "footer": {"text": f"Signal = price turns up (≥{self.trigger.enter:g}% over {self.trigger.name})"
                                + (f" or jumps ≥{self.bounce_pct:g}% off the 1h low" if self.bounce_pct > 0 else "")
+                               + (f" or rises ≥{self.tiny_pct:g}% right after a ≥{self.sharp_pct:g}% dump"
+                                  if self.sharp_pct > 0 and self.tiny_pct > 0 else "")
                                + f" after a ≥{self.dump_pct:g}% drop from the 24h high · "
                                f"tracked for 24h, this card updates with the result · block #{sig.block}"},
             "timestamp": datetime.fromtimestamp(sig.ts, timezone.utc).isoformat(),
@@ -477,6 +558,10 @@ class Signals:
         last: dict[int, int] = {}
         out = []
         bounced = np.zeros(w, dtype=bool)
+        t_armed = np.zeros(w, dtype=bool)          # dump → tiny uptick, replayed bar by bar
+        t_dumped = np.zeros(w, dtype=bool)
+        t_low = np.full(w, np.nan)
+        t_at = np.zeros(w, dtype=int)
         for i in range(LOOKBACK, total):
             f = fit_all(closes[i - tf.points + 1:i + 1], ones)
             up = f.ok & (f.change >= tf.enter) & (f.r2 >= tf.r2) & (f.shape == 1)
@@ -493,6 +578,24 @@ class Signals:
                 bfire = (rise >= self.bounce_pct) & ~bounced & ~np.isnan(rise)
                 bounced[rise >= self.bounce_pct] = True
                 fire = fire | bfire
+            if self.sharp_pct > 0 and self.tiny_pct > 0:   # first small pump after a sharp dump
+                cur = closes[i]
+                with np.errstate(invalid="ignore"):
+                    drop = (cur / np.nanmax(closes[max(0, i - SHARP_BUCKETS):i + 1], axis=0) - 1) * 100
+                t_dumped[np.nan_to_num(drop) > -self.sharp_pct / 2] = False
+                t_armed[t_armed & (i - t_at > SHARP_WAIT_BUCKETS)] = False
+                armed_now = t_armed.copy()
+                new = (np.nan_to_num(drop) <= -self.sharp_pct) & ~t_armed & ~t_dumped
+                t_armed |= new
+                t_dumped |= new
+                t_low[new] = cur[new]
+                t_at[new] = i
+                upd = armed_now & ~np.isnan(cur)
+                t_low[upd] = np.fmin(t_low[upd], cur[upd])
+                with np.errstate(invalid="ignore"):
+                    tfire = upd & ((cur / t_low - 1) * 100 >= self.tiny_pct)
+                t_armed[tfire] = False
+                fire = fire | tfire
             st[flip] = target[flip]
             for n in np.nonzero(fire)[0]:
                 n = int(n)
