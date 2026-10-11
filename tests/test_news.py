@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from snmon.news import ANNOUNCE, TEAM, XPOST, Channel, NewsMonitor, x_by, x_new  # noqa: E402
+from snmon.news import ANNOUNCE, TEAM, XPOST, Channel, NewsMonitor, subnet_named, x_by, x_new  # noqa: E402
 
 
 class _Meta:
@@ -134,6 +134,17 @@ def _tw(i, age_h, repost=False):
     if repost:
         t["reposted_by"] = {"screen_name": "const_reborn"}
     return t
+
+
+def test_a_subnet_named_in_a_post_is_found_by_its_name():
+    names = {114: "SOMA", 64: "Chutes", 44: "Score", 16: "kenju", 2: "DSperse"}
+    assert subnet_named("Why is SOMA such a great compressor in the #Bittensor ecosystem?", names) == 114
+    assert subnet_named("Soma is great", names) == 114 and subnet_named("Bullish on CHUTES", names) == 64
+    assert subnet_named("check out Kenju", names) == 16
+    assert subnet_named("soma is great", names) is None                          # a plain lowercase word
+    assert subnet_named("The Score is high", names) is None                       # an ordinary-word name
+    assert subnet_named("SOMA and Chutes both shipped", names) is None            # two subnets: ambiguous
+    assert subnet_named("see https://example.com/SOMA/page", names) is None       # inside a link
 
 
 def test_x_repost_of_an_old_tweet_is_news():

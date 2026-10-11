@@ -571,7 +571,8 @@ class NewsMonitor:
                 await asyncio.sleep(5 if failed else every)
 
     def _x_subnet(self, t: dict) -> int | None:
-        """Which subnet a tweet is about: 'SN81' / 'subnet 81', or an @handle containing a subnet's name."""
+        """Which subnet a tweet is about: 'SN81' / 'subnet 81', an @handle containing a subnet's name, or the name itself
+        written as a name ('Why is SOMA such a great compressor…' → SN114)."""
         text = (t.get("text") or "") + " " + ((t.get("quote") or {}).get("text") or "")
         m = re.search(r"\b(?:sn|subnet)\s?#?(\d{1,3})\b", text, re.I)
         if m and int(m.group(1)) in self.meta.subnets:
@@ -583,7 +584,7 @@ class NewsMonitor:
             name = re.sub(r"[^a-z0-9]", "", (info.name or "").lower())
             if n and len(name) >= 4 and any(name in h for h in handles if h):
                 return n
-        return None
+        return subnet_named(text, {n: i.name for n, i in self.meta.subnets.items() if n})
 
     async def _post_x(self, t: dict, handle: str, parent: dict | None = None) -> None:
         """`parent` is the tweet he replied to (when the timeline carries it) — shown as context."""
@@ -675,6 +676,32 @@ class NewsMonitor:
                                               "x": self._x_seen, "x_ids": self._x_ids}))
         except OSError:
             pass
+
+
+# subnet names that are also ordinary words / first names: a post naming one may mean the word (kept in step with the
+# trader's matcher, sn_trader/sntrader/match.py)
+COMMON_NAMES = frozenset({
+    "apex", "hone", "iota", "zeus", "dojo", "gaia", "beam", "nova", "orion", "logic", "score", "synth", "swarm",
+    "actual", "claims", "carbon", "cortex", "herald", "parked", "unknown", "instant", "cascade", "witness",
+    "investing", "liquidity", "almanac", "cathedral", "enigma", "ditto", "ralph", "astrid", "luis", "mantis",
+    "deprecated", "conjectures", "attune", "perturb", "refinery", "graphite", "gradients", "minos", "quasar",
+    "ridges", "templar", "engy", "tag101", "root", "data", "vision", "chat", "cloud", "network", "compute",
+    "search", "agent", "agents", "flex", "web",
+})
+
+
+def subnet_named(text: str, names: dict[int, str]) -> int | None:
+    """The one subnet whose NAME the text writes as a name — exactly as the chain spells it, shouted, or capitalised for
+    names the chain spells all-caps / all-lowercase (SOMA, Soma, Chutes, CHUTES). Ordinary-word names, names under 4
+    letters, duplicated names and posts naming several subnets give None. Words inside links do not count."""
+    lower = [n.lower() for n in names.values() if n]
+    forms: dict[str, int] = {}
+    for n, name in names.items():
+        if re.fullmatch(r"[A-Za-z0-9]{4,}", name or "") and name.lower() not in COMMON_NAMES and lower.count(name.lower()) == 1:
+            for form in {name, name.upper()} | ({name.capitalize()} if name.isupper() or name.islower() else set()):
+                forms.setdefault(form, n)
+    hits = {forms[t] for t in re.findall(r"[A-Za-z0-9]+", re.sub(r"https?://\S+", " ", text or "")) if t in forms}
+    return next(iter(hits)) if len(hits) == 1 else None
 
 
 def x_by(t: dict, handle: str) -> bool:
