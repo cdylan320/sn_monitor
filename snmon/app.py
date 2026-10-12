@@ -142,7 +142,7 @@ class App:
             self.mempool = mp = Mempool(self.feed, self.meta, self.cfg.mempool_endpoints,
                                         self.cfg.mempool_min_pct, self.cfg.mempool_poll_ms,
                          price_now=lambda n: self.det.history.get(self.det.last_block, {}).get(n),
-                         watched=self.watched, on_pending=self.on_pending)
+                         watched=self.watched, on_pending=self.on_pending, on_swap=self.on_swap_pending)
             asyncio.create_task(mp.run())
         if self.cfg.startup_message and not self.cfg.dry_run:
             asyncio.create_task(self._startup_message())
@@ -263,6 +263,10 @@ class App:
             self.trades_failed.add(block.number)
         if life and self.subnets:
             asyncio.create_task(self.subnets.on_events(block.number, life))
+        if self.subnets:
+            due = self.subnets.due_swaps(block.number)
+            if due:     # an announced owner swap has just become executable
+                asyncio.create_task(self.subnets.post_due(due, block.number))
         self.trades[block.number] = tr
         if self.trade_log_start is None:
             self.trade_log_start = block.number
@@ -306,6 +310,11 @@ class App:
                 self._refresh_card(g)
 
     # ── mempool ──────────────────────────────────────────────────────────
+
+    def on_swap_pending(self, owner: str, new_coldkey: str, tx_hash: str) -> None:
+        """A subnet owner's swap transaction is in the mempool (before it lands)."""
+        if self.subnets:
+            asyncio.create_task(self.subnets.swap_pending(owner, new_coldkey, tx_hash))
 
     def on_pending(self, p: alerts.Pending) -> None:
         """Trades on the same subnet within ~2 blocks share one card (bots often fire the same

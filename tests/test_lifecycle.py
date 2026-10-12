@@ -37,6 +37,11 @@ class Meta:
     async def facts(self):
         return {"subnets": 128, "limit": 128, "cost": 1149.6, "prune": self.prune, "swap_delay": 36000}
 
+    announced: dict = {}
+
+    async def swap_announcements(self, owners):
+        return {o: b for o, b in self.announced.items() if o in owners}
+
 
 def watch(subnets):
     meta = Meta(subnets)
@@ -133,6 +138,68 @@ def test_next_to_be_pruned_is_announced_only_after_it_holds():
         assert heads(w) == ["⚠️ **SN55 NIOME** is now **first in line to be deregistered** when the next subnet registers (it was SN92 Bottom)"]
         await w.reconcile()
         assert len(w.sent) == 1
+    asyncio.run(go())
+
+
+def test_a_swap_in_the_mempool_posts_a_card_before_the_block_and_only_once_per_transaction():
+    async def go():
+        w, meta = watch(BASE)
+        await w.swap_pending("5Nobody", "5New", "0xtx0")                      # not a subnet owner: nothing
+        assert w.sent == []
+        await w.swap_pending("5Chutes", "5NewChutes", "0xtx1")
+        assert heads(w)[0].startswith("🔑 **SN64 Chutes** — owner coldkey **swap transaction in the mempool**")
+        e = w.sent[0]["embeds"][0]
+        assert "PENDING" in e["title"] and "next block or two" in e["description"] and "mempool" in e["footer"]["text"]
+        assert "found by state check" not in e["footer"]["text"]
+        await w.swap_pending("5Chutes", "5NewChutes", "0xtx1")                # the same transaction seen again: still one card
+        assert len(w.sent) == 1
+        await w.swap_pending("5Chutes", "5NewChutes", "0xtx2")                # a different transaction: a new card
+        assert len(w.sent) == 2
+    asyncio.run(go())
+
+
+def test_an_announced_swap_gets_a_second_card_the_moment_it_can_be_executed():
+    async def go():
+        w, meta = watch(BASE)
+        await w.on_events(101, [("ColdkeySwapAnnounced", ("5Chutes", "0xabc"))])
+        assert w.swaps["5Chutes"] == {"exec": 101 + 36000, "nets": [64], "notified": False}
+        assert w.due_swaps(36100) == [] and w.due_swaps(36101) == ["5Chutes"]
+        await w.post_due(w.due_swaps(36101), 36101)
+        h = heads(w)
+        assert h[-1] == "⏰ **SN64 Chutes** — the announced coldkey swap **can be executed now**"
+        assert "CAN BE EXECUTED NOW" in w.sent[-1]["embeds"][0]["title"] and "#36101" in w.sent[-1]["embeds"][0]["description"]
+        assert w.due_swaps(36500) == []                                       # told once
+        await w.post_due(["5Chutes"], 36500)
+        assert len(w.sent) == 2                                               # (the announcement card + this one)
+        # it is remembered across a restart, with the "already told" flag
+        w2 = SubnetWatch(meta, None, w.refresh, w.path, dry_run=True)
+        meta.announced = {"5Chutes": 101 + 36000}
+        await w2.start()
+        assert w2.swaps["5Chutes"]["notified"] is True and w2.due_swaps(40000) == []
+    asyncio.run(go())
+
+
+def test_the_wait_card_does_not_come_when_the_swap_was_done_disputed_or_withdrawn():
+    async def go():
+        for ev in ("ColdkeySwapped", "ColdkeySwapDisputed", "ColdkeySwapReset", "ColdkeySwapCleared"):
+            w, meta = watch(BASE)
+            await w.on_events(101, [("ColdkeySwapAnnounced", ("5Chutes", "0xabc"))])
+            assert "5Chutes" in w.swaps
+            await w.on_events(200, [(ev, ("5Chutes", "5NewChutes") if ev == "ColdkeySwapped" else ("5Chutes",))])
+            assert w.swaps == {}, ev
+            assert w.due_swaps(99999) == []
+    asyncio.run(go())
+
+
+def test_the_chain_is_the_source_of_truth_for_pending_announcements():
+    async def go():
+        w, meta = watch(BASE)
+        meta.announced = {"5Chutes": 50000, "5Nobody": 60000}                 # one real owner, one wallet that is nobody's
+        await w._sync_swaps()
+        assert w.swaps == {"5Chutes": {"exec": 50000, "nets": [64], "notified": False}}
+        meta.announced = {}                                                   # it was cancelled meanwhile
+        await w._sync_swaps()
+        assert w.swaps == {}
     asyncio.run(go())
 
 

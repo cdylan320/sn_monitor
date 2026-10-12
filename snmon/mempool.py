@@ -64,8 +64,10 @@ def _walk(call: dict, signer: str | None) -> Iterator[tuple[str, dict, str | Non
 class Mempool:
     def __init__(self, feed: Feed, meta: Meta, endpoints: list[str], min_pct: float, poll_ms: int,
                  price_now: Callable[[int], int | None], watched: Callable[[int], bool],
-                 on_pending: Callable[[Pending], None]) -> None:
+                 on_pending: Callable[[Pending], None],
+                 on_swap: Callable[[str, str, str], None] | None = None) -> None:
         self.feed, self.meta = feed, meta
+        self.on_swap = on_swap        # (signer coldkey, new coldkey, tx hash) for a pending swap_coldkey_announced
         self.rpcs = [Rpc(u) for u in endpoints]
         self._cool: dict[str, float] = {}
         self.min_pct = min_pct
@@ -141,6 +143,8 @@ class Mempool:
         signer = _acct(ext.get("address"))
         tx_hash = blake2_256(bytes.fromhex(hx[2:]))
         for fn, args, who in _walk(ext.get("call"), signer):
+            if fn == "swap_coldkey_announced" and self.on_swap and who:   # an owner is about to sell the subnet
+                self.on_swap(who, _acct(args.get("new_coldkey")) or "", tx_hash)
             if fn in BUY_CALLS or fn in SELL_CALLS or fn in CROSS_CALLS:
                 self.stake_calls += 1
             try:

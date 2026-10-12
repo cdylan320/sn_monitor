@@ -7,6 +7,8 @@ Real time from chain events (decoded every block, ~1s after the block):
   ⏳ NetworkRegistrationQueued    someone queued a new subnet registration (+ who would be pruned)
   ⚠️ DissolveNetworkScheduled     an owner scheduled dissolving their subnet
   🔑 ColdkeySwap*                 a subnet OWNER's coldkey swap: announced / swapped / disputed / reset
+  ⏰ swap can be executed now     the wait after an announced swap is over (announcement block + ColdkeySwapAnnouncementDelay)
+  🔑 swap in the mempool          the owner's swap transaction seen pending, ~1 block before it lands (see mempool.py)
   👑 SubnetOwnerChanged           ownership reassigned · 🗝️ SubnetOwnerHotkeySet
   ✏️ SubnetIdentitySet / 🔤 SymbolUpdated   name, links, logo or symbol changed (shown as a diff)
   🚀 FirstEmissionBlockNumberSet  emissions start · 📜 lease created / terminated · 🧮 slot limit changed
@@ -76,6 +78,10 @@ class SubnetWatch:
         self._gone: dict[int, tuple[SubnetInfo, float]] = {}  # recently deregistered, by slot
         self._removed_now: list[int] = []
         self._queued_now: list = []
+        # announced owner coldkey swaps still waiting: owner → {"exec": first block it can be executed, "nets": [netuid], "notified": bool}
+        self.swaps: dict[str, dict] = {}
+        self._swaps_synced = 0.0
+        self._pending_txs: dict[str, float] = {}   # swap transactions already announced from the mempool
         self.sent: list[dict] = []      # payloads, for dry runs and tests
 
     # ── lifecycle ────────────────────────────────────────────────────────
@@ -92,16 +98,18 @@ class SubnetWatch:
             for n in [n for n in self.known if str(n) not in saved.get("subnets", {})]:
                 del self.known[n]
             self._prune_announced = saved.get("prune")
+            self.swaps = {k: v for k, v in (saved.get("swaps") or {}).items() if isinstance(v, dict) and "exec" in v}
         except (OSError, ValueError, KeyError):
             pass
         await self.reconcile()
+        await self._sync_swaps()
 
     def note(self, prices: dict[int, int]) -> None:
         self.prices.update(prices)
 
     def _save(self) -> None:
         try:
-            self.path.write_text(json.dumps({"prune": self._prune_announced, "subnets": {
+            self.path.write_text(json.dumps({"prune": self._prune_announced, "swaps": self.swaps, "subnets": {
                 n: {"name": s.name, "symbol": s.symbol, "pool": s.pool_tao, "registered_at": s.registered_at,
                     "owner": s.owner, "owner_hotkey": s.owner_hotkey, "identity": s.identity}
                 for n, s in self.known.items()}}))
@@ -262,11 +270,17 @@ class SubnetWatch:
     async def _ev_ColdkeySwapAnnounced(self, a, old, new, block) -> None:
         delay = self.facts.get("swap_delay") or 0
         when = f" It can be executed in about {eta(delay)} (block #{block + delay})." if delay else ""
-        await self._owner_event(str(pick(a, 0, "who", "coldkey", "old_coldkey")), old, new, block, "🔑", "announced",
+        who = str(pick(a, 0, "who", "coldkey", "old_coldkey"))
+        await self._owner_event(who, old, new, block, "🔑", "announced",
                                 f"The subnet owner announced moving ownership to a new coldkey.{when}", AMBER)
+        nets = sorted(n for n, i in new.items() if n and i.owner == who)
+        if nets and delay:     # remember it: a card follows when the wait is over and the swap can be executed
+            self.swaps[who] = {"exec": block + delay, "nets": nets, "notified": False}
+            self._save()
 
     async def _ev_ColdkeySwapped(self, a, old, new, block) -> None:
         old_ck, new_ck = str(pick(a, 0, "old_coldkey", "old")), str(pick(a, 1, "new_coldkey", "new"))
+        self._swap_done(old_ck)
         hit = False
         for n, info in sorted(new.items()):
             was = old.get(n)
@@ -282,15 +296,22 @@ class SubnetWatch:
         if not hit:   # any other wallet's coldkey swap: not a subnet sale, so no alert — but say so in the log
             log.info("coldkey swap in #%d is not a subnet owner's (no alert): %s → %s", block, fmt.short(old_ck), fmt.short(new_ck))
 
+    def _swap_done(self, owner: str) -> None:
+        if self.swaps.pop(owner, None) is not None:
+            self._save()
+
     async def _ev_ColdkeySwapDisputed(self, a, old, new, block) -> None:
+        self._swap_done(str(pick(a, 0, "who", "coldkey")))
         await self._owner_event(str(pick(a, 0, "who", "coldkey")), old, new, block, "🚨", "disputed",
                                 "The announced coldkey swap of this subnet's owner was disputed.", RED)
 
     async def _ev_ColdkeySwapReset(self, a, old, new, block) -> None:
+        self._swap_done(str(pick(a, 0, "who", "coldkey")))
         await self._owner_event(str(pick(a, 0, "who", "coldkey")), old, new, block, "🔑", "reset",
                                 "The pending coldkey swap of this subnet's owner was reset.", AMBER)
 
     async def _ev_ColdkeySwapCleared(self, a, old, new, block) -> None:
+        self._swap_done(str(pick(a, 0, "who", "coldkey")))
         await self._owner_event(str(pick(a, 0, "who", "coldkey")), old, new, block, "🔑", "cleared",
                                 "The coldkey swap announcement of this subnet's owner was cleared.", AMBER)
 
@@ -411,6 +432,8 @@ class SubnetWatch:
             else:
                 await self._identity(n, was, info, None)
         self.known = dict(new)
+        if time.time() - self._swaps_synced > 1800:
+            await self._sync_swaps()
         try:
             self.facts = await self.meta.facts()
             await self._prune_watch()
@@ -437,6 +460,72 @@ class SubnetWatch:
                                      "If a new subnet registers while every slot is taken, this subnet is the one removed.",
                                      self._market(cur, info) + self._slots(), AMBER, None))
 
+    # ── a subnet sale, early: the swap sits in the mempool; and the wait after the announcement ends ───
+
+    def _owned(self, owner: str) -> list[int]:
+        return sorted(n for n, i in {**self.known, **self.meta.subnets}.items() if n and i.owner == owner)
+
+    async def swap_pending(self, owner: str, new_coldkey: str, tx_hash: str) -> None:
+        """The owner's swap transaction was seen in the public mempool: it lands in the next block or two."""
+        nets = self._owned(owner)
+        if not nets or tx_hash in self._pending_txs:
+            return
+        self._pending_txs[tx_hash] = time.time()
+        for h in [h for h, t in self._pending_txs.items() if time.time() - t > 3600]:
+            del self._pending_txs[h]
+        for n in nets:
+            info = self.meta.subnets.get(n) or self.known.get(n)
+            await self._post(f"🔑 **{self._sn(n, info)}** — owner coldkey **swap transaction in the mempool**"
+                             f"{': ' + fmt.short(owner) + ' → ' + fmt.short(new_coldkey) if new_coldkey else ''}",
+                             self._embed(n, info, f"🔑 OWNER COLDKEY SWAP PENDING · SN{n}",
+                                         "The owner's swap transaction is waiting in the public mempool and lands in the next block or two. "
+                                         "Bots stake into the subnet in that very block, so the price can move at once.",
+                                         [{"name": "Old owner", "value": acct(owner), "inline": True}]
+                                         + ([{"name": "New owner", "value": acct(new_coldkey), "inline": True}] if new_coldkey else [])
+                                         + self._market(n, info), AMBER, None, "seen in the mempool, before the block"))
+
+    def due_swaps(self, head: int) -> list[str]:
+        """Owners whose announced swap can be executed from `head` on and who have not been told yet."""
+        return [o for o, s in self.swaps.items() if not s.get("notified") and head >= int(s["exec"])]
+
+    async def post_due(self, owners: list[str], head: int) -> None:
+        for owner in owners:
+            s = self.swaps.get(owner)
+            if not s or s.get("notified"):
+                continue
+            s["notified"] = True
+            self._save()
+            for n in s.get("nets") or self._owned(owner):
+                info = self.meta.subnets.get(n) or self.known.get(n)
+                late = head - int(s["exec"])
+                await self._post(f"⏰ **{self._sn(n, info)}** — the announced coldkey swap **can be executed now**",
+                                 self._embed(n, info, f"⏰ OWNER COLDKEY SWAP CAN BE EXECUTED NOW · SN{n}",
+                                             f"The wait after the announcement is over (since block #{s['exec']}"
+                                             f"{', ' + eta(late) + ' ago' if late > 25 else ''}). The owner can complete the swap in any "
+                                             f"block from now on — when it lands, the subnet changes hands.",
+                                             [{"name": "Owner coldkey", "value": acct(owner), "inline": True}] + self._market(n, info),
+                                             AMBER, head))
+
+    async def _sync_swaps(self) -> None:
+        """Read the announced swaps from the chain (after a restart, and as a check on the events)."""
+        self._swaps_synced = time.time()
+        owners = sorted({i.owner for n, i in self.meta.subnets.items() if n and i.owner})
+        if not owners:
+            return
+        try:
+            chain = await self.meta.swap_announcements(owners)
+        except Exception as e:
+            log.debug("could not read the swap announcements (%s)", e)
+            return
+        keep = {}
+        for owner, ex in chain.items():
+            before = self.swaps.get(owner) or {}
+            keep[owner] = {"exec": ex, "nets": self._owned(owner),
+                           "notified": bool(before.get("exec") == ex and before.get("notified"))}
+        if keep != self.swaps:
+            self.swaps = keep
+            self._save()
+
     # ── building blocks ──────────────────────────────────────────────────
 
     @staticmethod
@@ -461,9 +550,9 @@ class SubnetWatch:
         return out
 
     def _embed(self, n: int | None, info: SubnetInfo | None, title: str, desc: str, fields: list[dict], color: int,
-               block: int | None) -> dict:
+               block: int | None, note: str = "") -> dict:
         e = {"title": title, "description": desc, "color": color, "fields": fields,
-             "footer": {"text": "Subnet lifecycle" + (f" · block #{block}" if block else " · found by state check")},
+             "footer": {"text": "Subnet lifecycle" + (f" · block #{block}" if block else f" · {note or 'found by state check'}")},
              "timestamp": datetime.now(timezone.utc).isoformat()}
         if n is not None:
             e["url"] = alerts.subnet_url(n)

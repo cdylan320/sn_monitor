@@ -82,6 +82,8 @@ events on every block, about 1 s after the block:
 | 🆕 New subnet registered | `NetworkAdded`: owner, hotkey, price, pool, whose slot it took |
 | ⚠️ Dissolve scheduled | `DissolveNetworkScheduled` |
 | 🔑 Owner coldkey swap | `ColdkeySwapAnnounced` / `Swapped` / `Disputed` / `Reset` / `Cleared`, only for coldkeys that own a subnet |
+| ⏰ Swap can be executed now | the 5-day wait after an announced owner swap is over (block announced + 36,000): from then on the swap can land in any block. Restored from the chain after a restart |
+| 🔑 Swap transaction in the mempool | the owner's `swap_coldkey_announced` is seen pending (also through a proxy / batch), about one block before it lands — bots stake in that block. Needs `MEMPOOL_ALERTS=true` |
 | 👑 Owner changed, 🗝️ owner hotkey changed | `SubnetOwnerChanged`, `SubnetOwnerHotkeySet` |
 | ✏️ Renamed / identity changed, 🔤 symbol | `SubnetIdentitySet`, `SymbolUpdated`, shown as a before/after diff |
 | 🚀 Emissions start, 📜 lease, 🧮 slot limit | `FirstEmissionBlockNumberSet`, `SubnetLease*`, `SubnetLimitSet` |

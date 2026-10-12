@@ -228,6 +228,25 @@ class Meta:
     def decode_extrinsic(self, hex_ext: str):
         return self._w.run(self._decode_extrinsic(hex_ext))
 
+    def swap_announcements(self, owners: list[str]):
+        """{owner coldkey: block from which its announced coldkey swap can be executed} for the owners that announced one."""
+        return self._w.run(self._swap_announcements(owners))
+
+    async def _swap_announcements(self, owners: list[str]) -> dict[str, int]:
+        sub = await self._substrate()
+        gate = asyncio.Semaphore(12)
+
+        async def one(owner: str):
+            async with gate:
+                r = await sub.query("SubtensorModule", "ColdkeySwapAnnouncements", [owner])
+                v = getattr(r, "value", r)
+                return owner, (int(v[0]) if v else None)
+        out = {}
+        for res in await asyncio.gather(*(one(o) for o in owners), return_exceptions=True):
+            if not isinstance(res, BaseException) and res[1]:
+                out[res[0]] = res[1]
+        return out
+
     def stake_of(self, coldkey: str, hotkey: str, netuid: int):
         return self._w.run(self._stake_of(coldkey, hotkey, netuid))
 
