@@ -267,9 +267,11 @@ class SubnetWatch:
 
     async def _ev_ColdkeySwapped(self, a, old, new, block) -> None:
         old_ck, new_ck = str(pick(a, 0, "old_coldkey", "old")), str(pick(a, 1, "new_coldkey", "new"))
+        hit = False
         for n, info in sorted(new.items()):
             was = old.get(n)
             if n and ((was and was.owner == old_ck) or info.owner == new_ck and was and was.owner != new_ck):
+                hit = True
                 self._mark("owner", n)
                 await self._post(f"🔑 **{self._sn(n, info)}** — owner coldkey **swapped**: {fmt.short(old_ck)} → {fmt.short(new_ck)}",
                                  self._embed(n, info, f"🔑 OWNER COLDKEY SWAPPED · SN{n}",
@@ -277,6 +279,8 @@ class SubnetWatch:
                                              [{"name": "Old owner", "value": acct(old_ck), "inline": True},
                                               {"name": "New owner", "value": acct(new_ck), "inline": True}] + self._market(n, info),
                                              AMBER, block))
+        if not hit:   # any other wallet's coldkey swap: not a subnet sale, so no alert — but say so in the log
+            log.info("coldkey swap in #%d is not a subnet owner's (no alert): %s → %s", block, fmt.short(old_ck), fmt.short(new_ck))
 
     async def _ev_ColdkeySwapDisputed(self, a, old, new, block) -> None:
         await self._owner_event(str(pick(a, 0, "who", "coldkey")), old, new, block, "🚨", "disputed",
