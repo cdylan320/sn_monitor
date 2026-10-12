@@ -1,6 +1,8 @@
 """Run: .venv/bin/python tests/test_news.py"""
+import asyncio
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -178,6 +180,76 @@ def test_x_only_the_accounts_own_actions_count():
     repost = {"id": "15", "author": {"screen_name": "jon_durbin"}, "reposted_by": {"screen_name": "Const_Reborn"}}
     assert not x_by(theirs, "const_reborn")
     assert x_by(reply, "const_reborn") and x_by(repost, "const_reborn")
+
+
+class _Timeline:
+    """A pretend fxtwitter: every request takes `latency` seconds; const's tweet "p2" shows up `appear_at` seconds after start."""
+    def __init__(self, latency, appear_at, first_status=200, retry_after=None):
+        self.t0, self.latency, self.appear_at = time.time(), latency, appear_at
+        self.requests = self.inflight = self.peak = 0
+        self.first_status, self.retry_after, self.times = first_status, retry_after, []
+
+    def get(self, url):
+        tl = self
+
+        class R:
+            status = 200
+            headers = {}
+
+            async def __aenter__(self):
+                tl.requests += 1; tl.inflight += 1; tl.peak = max(tl.peak, tl.inflight); tl.times.append(time.time() - tl.t0)
+                if tl.requests == 1 and tl.first_status != 200:
+                    self.status = tl.first_status
+                    self.headers = {"Retry-After": str(tl.retry_after)} if tl.retry_after else {}
+                await asyncio.sleep(tl.latency)
+                tl.inflight -= 1
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def json(self, content_type=None):
+                items = [{"id": "p1", "author": {"screen_name": "const_reborn"}, "text": "gm"}]
+                if time.time() - tl.t0 >= tl.appear_at:
+                    items.insert(0, {"id": "p2", "author": {"screen_name": "const_reborn"}, "text": "SN46 is up"})
+                return {"results": items}
+        return R()
+
+
+def _run_x_loop(tl, seconds, post_delay=0.0, every=0.05):
+    async def go():
+        import snmon.news as N
+        m = nm()
+        posted = []
+
+        async def post_x(t, h, parent=None):
+            posted.append((t["id"], time.time() - tl.t0))
+            await asyncio.sleep(post_delay)          # posting the Discord card takes a moment
+        m._post_x, m._save_state = post_x, lambda: None
+        task = asyncio.create_task(m._x_poll_loop(tl, ["const_reborn"], every))
+        await asyncio.sleep(seconds)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return posted
+    return asyncio.run(go())
+
+
+def test_x_overlapping_looks_post_a_new_tweet_once_even_while_its_card_is_still_being_posted():
+    tl = _Timeline(latency=0.4, appear_at=1.0)
+    posted = _run_x_loop(tl, 2.4, post_delay=0.6)          # the card takes longer than a look: other looks come back meanwhile
+    assert [p[0] for p in posted] == ["p2"], posted        # exactly once (p1 was only recorded by the first look)
+    assert posted[0][1] - 1.0 <= 0.4 + 0.25               # about one answer time after the tweet
+    assert tl.peak >= 3                                    # the looks really overlapped
+
+
+def test_x_a_429_pauses_the_looks_for_the_time_the_server_asks():
+    tl = _Timeline(latency=0.2, appear_at=99, first_status=429, retry_after=1)
+    _run_x_loop(tl, 2.2)
+    assert len([t for t in tl.times if t < 0.9]) == 1, tl.times     # slow start: one look, throttled, nothing else is sent
+    assert len([t for t in tl.times if t >= 1.0]) >= 3, tl.times    # after the pause the looks go on
 
 
 if __name__ == "__main__":

@@ -525,50 +525,84 @@ class NewsMonitor:
         know is new activity. (The API gives a repost the ORIGINAL tweet's date — const reposting a
         4-day-old tweet today is news today. An unseen item below everything we know is just an older
         tweet scrolling into view, and is ignored.)"""
-        base = "https://api.fxtwitter.com/2/profile/{}/statuses"
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8),
                                          headers={"User-Agent": "Mozilla/5.0 sn-monitor"}) as session:
+            await self._x_poll_loop(session, handles, every)
 
-            async def fetch(url: str) -> list | None:
-                try:
-                    async with session.get(url) as r:
-                        return ((await r.json(content_type=None)).get("results") or []) if r.status == 200 else None
-                except Exception as e:
-                    log.debug("X timeline failed: %s", e)
-                    return None
+    async def _x_poll_loop(self, session, handles: list[str], every: float) -> None:
+        """A new look at each account every `every` seconds WITHOUT waiting for the previous one. A look takes 2-4 s (the
+        free fxtwitter API fetches X for us), so one after another would see a fresh timeline only every ~5 s. Each look
+        handles its own result when it arrives; what it hands out is recorded as seen BEFORE anything is posted, so two
+        looks never post the same tweet. A 429 pauses every look for the time the server asks."""
+        base = "https://api.fxtwitter.com/2/profile/{}/statuses"
+        pause_until = 0.0
+        answered: dict[str, int] = {}                        # looks that have come back, per account (slow start)
+        looks: dict[str, set] = {h: set() for h in handles}
 
+        async def fetch(url: str) -> list | None:
+            nonlocal pause_until
+            try:
+                async with session.get(url) as r:
+                    if r.status == 429:
+                        try:
+                            wait = float(r.headers.get("Retry-After") or 30)
+                        except ValueError:
+                            wait = 30.0
+                        pause_until = time.time() + min(max(wait, 1.0), 300.0)
+                        log.warning("X timeline: too many requests (429) — pausing the look-ups for %.0f s", pause_until - time.time())
+                        return None
+                    return ((await r.json(content_type=None)).get("results") or []) if r.status == 200 else None
+            except Exception as e:
+                log.debug("X timeline failed: %s", e)
+                return None
+
+        async def look(h: str) -> None:
+            try:
+                # with_replies=true is the complete timeline (posts, quotes, replies, reposts). The plain
+                # one silently omits replies to others AND some of his own quote-posts, so it is only the
+                # fallback when a request fails (the service returns a 404 on ~1 request in 7).
+                items = await fetch(base.format(h) + "?with_replies=true")
+                if items is None and time.time() >= pause_until:
+                    items = await fetch(base.format(h))
+                if items is None:
+                    self.stats["x_fail"] = self.stats.get("x_fail", 0) + 1
+                    return
+                self.stats["x_polls"] = self.stats.get("x_polls", 0) + 1
+                seen = self._x_ids.setdefault(h.lower(), [])
+                fresh = [str(t.get("id")) for t in items if str(t.get("id")) not in seen]
+                # decided and recorded in one go, before any await: a look that comes back a moment later must not post it again
+                new = [t for t in x_new(items, set(seen)) if x_by(t, h)] if seen else []
+                by_id = {str(t.get("id")): t for t in items}
+                seen.extend(fresh)
+                del seen[:-400]
+                if fresh:
+                    self._save_state()
+                for t in new:
+                    parent = t.get("replying_to")
+                    parent = by_id.get(str(parent.get("status"))) if isinstance(parent, dict) else None
+                    try:
+                        await self._post_x(t, h, parent)
+                    except Exception:
+                        log.exception("X card for @%s failed", h)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("X look at @%s failed", h)
+            finally:
+                answered[h] = answered.get(h, 0) + 1
+
+        try:
             while True:
-                failed = False
                 for h in handles:
-                    # with_replies=true is the complete timeline (posts, quotes, replies, reposts). The plain
-                    # one silently omits replies to others AND some of his own quote-posts, so it is only the
-                    # fallback when a request fails (the service returns a 404 on ~1 request in 7).
-                    items = await fetch(base.format(h) + "?with_replies=true")
-                    if items is None:
-                        items = await fetch(base.format(h))
-                    if items is None:
-                        self.stats["x_fail"] = self.stats.get("x_fail", 0) + 1
-                        failed = True
-                        continue
-                    self.stats["x_polls"] = self.stats.get("x_polls", 0) + 1
-                    seen = self._x_ids.setdefault(h.lower(), [])
-                    fresh = [str(t.get("id")) for t in items if str(t.get("id")) not in seen]
-                    if seen:  # not the first look at this account
-                        by_id = {str(t.get("id")): t for t in items}
-                        for t in x_new(items, set(seen)):
-                            if not x_by(t, h):
-                                continue  # someone else's tweet, listed only as context for his reply
-                            parent = t.get("replying_to")
-                            parent = by_id.get(str(parent.get("status"))) if isinstance(parent, dict) else None
-                            try:
-                                await self._post_x(t, h, parent)
-                            except Exception:
-                                log.exception("X card for @%s failed", h)
-                    seen.extend(fresh)
-                    del seen[:-400]
-                    if fresh:
-                        self._save_state()
-                await asyncio.sleep(5 if failed else every)
+                    looks[h] = {t for t in looks[h] if not t.done()}
+                    limit = MAX_X_INFLIGHT if answered.get(h) else 1   # slow start: one look until the first answer is in
+                    if len(looks[h]) < limit and time.time() >= pause_until:
+                        looks[h].add(asyncio.create_task(look(h)))
+                await asyncio.sleep(every)
+        finally:
+            for group in looks.values():
+                for t in group:
+                    t.cancel()
 
     def _x_subnet(self, t: dict) -> int | None:
         """Which subnet a tweet is about: 'SN81' / 'subnet 81', an @handle containing a subnet's name, or the name itself
@@ -702,6 +736,9 @@ def subnet_named(text: str, names: dict[int, str]) -> int | None:
                 forms.setdefault(form, n)
     hits = {forms[t] for t in re.findall(r"[A-Za-z0-9]+", re.sub(r"https?://\S+", " ", text or "")) if t in forms}
     return next(iter(hits)) if len(hits) == 1 else None
+
+
+MAX_X_INFLIGHT = 8   # looks at one X account waiting for their answer at the same time
 
 
 def x_by(t: dict, handle: str) -> bool:

@@ -184,5 +184,5 @@ def load() -> Config:
         news_guild=(os.getenv("NEWS_GUILD_ID") or "").strip(),
         news_min_team_chars=_int("NEWS_MIN_TEAM_CHARS", 120),
         news_x_accounts=[h.lstrip("@") for h in _list("NEWS_X_ACCOUNTS", ("const_reborn",))],
-        news_x_poll_seconds=_float("NEWS_X_POLL_SECONDS", 20.0),
+        news_x_poll_seconds=_float("NEWS_X_POLL_SECONDS", 0.5),
     )
