@@ -119,6 +119,8 @@ class Config:
     news_min_team_chars: int
     news_x_accounts: list[str]
     news_x_poll_seconds: float
+    news_feed_port: int          # 0 = off; else the trading bots read the news from this port
+    news_feed_token: str
 
     @property
     def max_window(self) -> int:
@@ -185,4 +187,6 @@ def load() -> Config:
         news_min_team_chars=_int("NEWS_MIN_TEAM_CHARS", 120),
         news_x_accounts=[h.lstrip("@") for h in _list("NEWS_X_ACCOUNTS", ("const_reborn",))],
         news_x_poll_seconds=_float("NEWS_X_POLL_SECONDS", 0.5),
+        news_feed_port=_int("NEWS_FEED_PORT", 0),
+        news_feed_token=(os.getenv("NEWS_FEED_TOKEN") or "").strip(),
     )

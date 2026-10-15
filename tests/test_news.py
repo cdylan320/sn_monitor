@@ -116,6 +116,46 @@ def test_community_chatter_is_ignored():
     assert m.classify(msg("RANDO", "gm"), CH) is None
 
 
+class _Feed:
+    def __init__(self):
+        self.events = []
+
+    def publish(self, ev):
+        self.events.append(ev)
+        return 1
+
+
+def test_news_reaches_the_trading_bots_before_the_card_with_its_kind():
+    m = nm()
+    m.dry_run = True
+    m.news_feed = _Feed()
+    m.channels = {"C78": CH}
+
+    async def no_tweet(url):
+        return None
+    m.tweet = no_tweet
+    sent = []
+
+    async def send(payload, netuid, p0):
+        sent.append(len(m.news_feed.events))                     # how many events were out when the card went
+    m._send = send
+    asyncio.run(m._post(msg("SAM", "@everyone mainnet launch today", mention_everyone=True), CH, ANNOUNCE, "team"))
+    asyncio.run(m._post(msg("HELIOS", "https://x.com/a/status/1", id="101"), CH, XPOST, None))
+    asyncio.run(m._post(msg("SAM", "https://x.com/a/status/2", id="102"), CH, XPOST, "team"))
+    ev = m.news_feed.events
+    assert [e["kind"] for e in ev] == ["announcement", "x_other", "x_team"] and sent == [1, 2, 3]
+    assert ev[0]["netuid"] == 78 and ev[0]["price"] == 3_340_000 and ev[0]["who"] == "team"
+    assert ev[0]["url"].endswith("/C78/100") and abs(ev[0]["posted"] - 1790853480.0) < 1e5
+
+
+def test_no_feed_no_events_and_a_post_without_a_subnet_is_not_sent():
+    m = nm()
+    m._publish(78, "team", "team", "discord", "x", "", 0.0)    # no feed: nothing happens
+    m.news_feed = _Feed()
+    m._publish(None, "team", "team", "discord", "x", "", 0.0)
+    assert m.news_feed.events == []
+
+
 def test_card_layout():
     m = nm()
     payload, p0 = m.build(msg("SAM", "enrollment for C5 is open: https://github.com/Umi-BitSign/umi <@123>",

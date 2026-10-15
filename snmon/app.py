@@ -27,6 +27,7 @@ from .lifecycle import SubnetWatch
 from .mempool import Mempool
 from .bars import BUCKET, Bars
 from .meta import Meta, Trade
+from .feed import NewsFeed
 from .news import NewsMonitor
 from .rpc import Rpc
 from .signals import Signals, parse_trigger
@@ -75,6 +76,7 @@ class App:
             self.subnets = SubnetWatch(self.meta, self.subnet_discord, self._refresh_meta, ROOT / "data" / "subnets.json",
                                        dry_run=cfg.dry_run)
         self.news: NewsMonitor | None = None
+        self.news_feed: NewsFeed | None = None
         if cfg.news_webhook_url and cfg.news_discord_token:
             self.news_discord = self._hook(cfg.news_webhook_url)
             self.news = NewsMonitor(
@@ -110,6 +112,9 @@ class App:
             print(f"  {fmt.dim('discord')}    webhook “{hook.get('name')}” ✓")
         except Exception as e:
             log.error("Discord webhook check failed (%s) — monitoring anyway, alerts will retry", e)
+
+        if self.news and self.cfg.news_feed_port:
+            await self._news_feed_start()
 
         try:
             await asyncio.wait_for(self.meta.refresh(), 30)
@@ -148,6 +153,20 @@ class App:
             asyncio.create_task(self._startup_message())
         await asyncio.Event().wait()
 
+    async def _news_feed_start(self) -> None:
+        """The trading bots' news feed (sn_trader news trading): every news card about a subnet, as it is detected."""
+        if not self.cfg.news_feed_token:
+            log.warning("NEWS_FEED_PORT is set but NEWS_FEED_TOKEN is empty — the news feed stays off (never without a token)")
+            return
+        try:
+            feed = NewsFeed(self.cfg.news_feed_port, self.cfg.news_feed_token)
+            await feed.start()
+        except OSError as e:
+            log.error("news feed could not open port %d: %s", self.cfg.news_feed_port, e)
+            return
+        self.news_feed = self.news.news_feed = feed
+        print(f"  {fmt.dim('news feed')}  trading bots read the news on port {self.cfg.news_feed_port} (token required)")
+
     def _hook(self, url: str) -> Discord:
         """One Discord client per distinct webhook, so things posting to the same channel share its rate limit."""
         key = url.split("?")[0].rstrip("/")
@@ -159,6 +178,8 @@ class App:
         """Clean shutdown (pm2 restart): close HTTP sessions so nothing is left dangling."""
         if self.news:
             await self.news.client.close()
+        if self.news_feed:
+            await self.news_feed.close()
         for d in self._hooks.values():
             if d.session is not None:
                 await d.session.close()

@@ -128,6 +128,7 @@ class NewsMonitor:
         self.stats: dict[str, int] = {}
         self.posted = 0
         self.ready = False
+        self.news_feed = None       # NewsFeed: news events for the trading bots (set by the app when NEWS_FEED_PORT is on)
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -469,7 +470,21 @@ class NewsMonitor:
             emb["timestamp"] = datetime.fromtimestamp(t["created_timestamp"], timezone.utc).isoformat()
         return emb
 
+    def _publish(self, netuid: int | None, kind: str, who: str | None, source: str, text: str, url: str,
+                 posted: float) -> None:
+        """Hand a news event to the trading bots at once — before the card (and any tweet fetch) goes out."""
+        if self.news_feed is None or netuid is None:
+            return
+        price = self.price_now(netuid) or 0
+        n = self.news_feed.publish({"netuid": netuid, "kind": kind, "who": who or "", "source": source,
+                               "text": (text or "")[:280], "url": url or "", "posted": posted, "price": int(price)})
+        if n:
+            print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]}    ↳ news sent to {n} trading bot(s)"))
+
     async def _post(self, m: dict, ch: Channel, kind: str, who: str | None) -> None:
+        feed_kind = {ANNOUNCE: "announcement", TEAM: "team"}.get(kind) or ("x_team" if who else "x_other")
+        self._publish(ch.netuid, feed_kind, who, f"discord #{ch.name}", self._clean(m),
+                      f"https://discord.com/channels/{self.guild_id}/{ch.id}/{m['id']}", _ts(m))
         payload, p0 = self.build(m, ch, kind, who)
         x = X_RE.search(m.get("content") or "")
         if x:
@@ -649,6 +664,9 @@ class NewsMonitor:
             desc += (f"\n\n**In reply to {pa.get('name', '')} (@{pa.get('screen_name', '')}):**\n> "
                      + parent["text"].replace("\n", "\n> ")[:600])
         n = self._x_subnet(t)
+        # a repost is dated by the original tweet — for the bots it is news now
+        self._publish(n, "x_account", me.get("screen_name") or handle, f"x @{handle}", text, t.get("url") or "",
+                      time.time() if rb or not t.get("created_timestamp") else float(t["created_timestamp"]))
         info = self.meta.info(n) if n is not None else None
         p0 = self.price_now(n) if n is not None else None
         sub = f" · **SN{n} {info.name}**" if info else ""
