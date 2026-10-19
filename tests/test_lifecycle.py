@@ -96,6 +96,23 @@ def test_rename_is_shown_as_a_diff_and_no_change_is_silent():
     asyncio.run(go())
 
 
+
+def test_a_second_different_identity_change_soon_after_gets_its_own_card_the_same_one_does_not():
+    async def go():
+        w, meta = watch(BASE)
+        meta.next = {**BASE, 64: sub(64, "Chutes", owner="5Chutes", github="https://github.com/chutes/miner")}
+        await w.on_events(100, [("SubnetIdentitySet", 64)])                           # the repo link
+        assert len(w.sent) == 1 and "+ GitHub: https://github.com/chutes/miner" in w.sent[0]["embeds"][0]["description"]
+        w.known = dict(meta.subnets)
+        await w._identity(64, BASE[64], meta.subnets[64], None)                       # the same change seen again
+        assert len(w.sent) == 1
+        meta.next = {**meta.subnets, 64: sub(64, "Chutes", owner="5Chutes", github="https://github.com/chutes/miner",
+                                             url="https://chutes.ai")}
+        await w.on_events(110, [("SubnetIdentitySet", 64)])                           # minutes later: the website
+        assert len(w.sent) == 2 and "+ Website: https://chutes.ai" in w.sent[1]["embeds"][0]["description"]
+    asyncio.run(go())
+
+
 def test_coldkey_swap_only_matters_for_subnet_owners():
     async def go():
         w, meta = watch(BASE)

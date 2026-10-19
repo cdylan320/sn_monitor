@@ -351,7 +351,10 @@ class SubnetWatch:
         await self._identity(n, old.get(n), new.get(n), block)
 
     async def _identity(self, n: int, was: SubnetInfo | None, info: SubnetInfo | None, block) -> None:
-        if was is None or info is None or was.registered_at != info.registered_at or self._seen("identity", n):
+        # one card per CHANGE, not per subnet per 15 min: the event and the 2-minute catch-up report the same change
+        # once, while a second, different change (the repo link, then the website …) gets its own card
+        sig = (n, tuple(sorted((info.identity or {}).items())) if info else (), info.symbol if info else "")
+        if was is None or info is None or was.registered_at != info.registered_at or self._seen("identity", sig):
             return  # a new subnet setting its first identity is covered by its registration card
         changes = [(IDENTITY_LABELS[k], was.identity.get(k, ""), info.identity.get(k, "")) for k in IDENTITY_LABELS
                    if was.identity.get(k, "") != info.identity.get(k, "")]
@@ -359,7 +362,7 @@ class SubnetWatch:
             changes.append(("Symbol", was.symbol, info.symbol))
         if not changes:
             return
-        self._mark("identity", n)
+        self._mark("identity", sig)
         renamed = next((c for c in changes if c[0] == "Name"), None)
         diff = "\n".join(f"- {label}: {a_[:120] or '(empty)'}\n+ {label}: {b_[:120] or '(empty)'}" for label, a_, b_ in changes[:6])
         head = (f"✏️ **SN{n}** renamed: **“{renamed[1] or '(none)'}” → “{renamed[2] or '(none)'}”**" if renamed
