@@ -36,7 +36,8 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
   is seen (same block when the start call is visible in the mempool). Exit: first 2% drop from the high, from block one.
 - Coldkey swap (subnet sale): all-in like a new subnet (`SWAP_MAX_STAKE_TAO=0`); a pending swap is checked against the
   owner's announcement first (a swap the chain will refuse is not traded). Exit 1%.
-- const post, rename: up to 10 τ from the free balance (everything sold first only if short). Exit 1%.
+- const post, rename (name change, or a new/changed GitHub link or website — `RENAME_LINKS`): up to 10 τ from the free
+  balance (everything sold first only if short). Exit 1%.
 - Reversal, dump (≥70 τ with ≥1% drop, or ≥5% drop alone; also from the mempool), news (from the monitor's feed): free
   balance, ≤5 τ in pools under 5,000 τ; exit 1% stop, 1% trail, or no new high for 8 blocks.
 - Never buy the 3 subnets the chain would remove first (`PRUNE_RISK_COUNT`). Buys: tolerance 16% → 32%; all-in buys
