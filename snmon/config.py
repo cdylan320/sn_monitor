@@ -51,6 +51,16 @@ def _list(name: str, default: tuple[str, ...]) -> list[str]:
     return [x.strip() for x in v.split(",") if x.strip()]
 
 
+def _handles(name: str) -> dict[int, str]:
+    """NEWS_X_SUBNET_HANDLES=72:NATIXNetwork,21:- → {72: "NATIXNetwork", 21: ""} ("-" = watch no account)."""
+    out: dict[int, str] = {}
+    for item in _list(name, ()):
+        n, _, h = item.partition(":")
+        if n.strip().isdigit() and h.strip():
+            out[int(n)] = "" if h.strip() == "-" else h.strip().lstrip("@")
+    return out
+
+
 def _netuids(name: str) -> set[int]:
     out: set[int] = set()
     for part in (os.getenv(name) or "").replace(" ", "").split(","):
@@ -119,6 +129,9 @@ class Config:
     news_min_team_chars: int
     news_x_accounts: list[str]
     news_x_poll_seconds: float
+    news_x_subnets: bool          # watch every subnet's own X account (found from its website, checked on its profile)
+    news_x_subnet_rate: float     # … timeline requests per second for them, in all (one account after another)
+    news_x_subnet_handles: dict   # netuid → handle added / corrected by hand ("" = watch none)
     news_feed_port: int          # 0 = off; else the trading bots read the news from this port
     news_feed_token: str
 
@@ -187,6 +200,9 @@ def load() -> Config:
         news_min_team_chars=_int("NEWS_MIN_TEAM_CHARS", 120),
         news_x_accounts=[h.lstrip("@") for h in _list("NEWS_X_ACCOUNTS", ("const_reborn",))],
         news_x_poll_seconds=_float("NEWS_X_POLL_SECONDS", 0.5),
+        news_x_subnets=_bool("NEWS_X_SUBNETS", True),
+        news_x_subnet_rate=_float("NEWS_X_SUBNET_RATE", 3.0),
+        news_x_subnet_handles=_handles("NEWS_X_SUBNET_HANDLES"),
         news_feed_port=_int("NEWS_FEED_PORT", 0),
         news_feed_token=(os.getenv("NEWS_FEED_TOKEN") or "").strip(),
     )

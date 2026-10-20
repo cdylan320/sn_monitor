@@ -17,6 +17,9 @@ the gateway didn't deliver. After a restart, messages from the last 30 minutes a
 
 Each card shows the subnet's price at the time of the post, then is edited at +5m / +15m / +1h
 with the market's reaction.
+
+X is also watched directly: the accounts in NEWS_X_ACCOUNTS (const), and every subnet's own account (found by
+xsubnets) — a subnet's post is news the moment it is on X, minutes before someone shares it in the channel.
 """
 from __future__ import annotations
 
@@ -77,6 +80,8 @@ SS58 = re.compile(r"\b5[1-9A-HJ-NP-Za-km-z]{47}\b")  # a wallet address → supp
 GREETING = re.compile(r"^\s*(hi|hey|hello|gm|yo)\b(?!.*\b(all|everyone|folks|guys|miners|validators)\b)", re.I)
 
 ANNOUNCE, XPOST, TEAM = "announcement", "x_post", "team"
+X_TIMELINE = "https://api.fxtwitter.com/2/profile/{}/statuses"
+X_SUBNET_MAX_AGE_S = 600   # a subnet's post older than this when first seen (posted while the monitor was down) is not news
 LABEL = {ANNOUNCE: "📢 Announcement", XPOST: "🐦 X post", TEAM: "📰 Team update"}
 COLOR = {ANNOUNCE: 0xF59E0B, XPOST: 0x1D9BF0, TEAM: 0x8B5CF6}
 
@@ -124,6 +129,9 @@ class NewsMonitor:
         self._fetching: set[str] = set()
         self._member_lookup_off = False
         self._x_ids: dict[str, list[str]] = {}  # X handle → tweet ids already seen
+        self._x_sub: dict[str, float] = {}       # tweet id → when a subnet's own account was seen posting it
+        self._x_pause_until = 0.0                # fxtwitter answered 429: no X request before this (every X loop)
+        self._x_discovery: asyncio.Task | None = None
         self._recent: dict[str, list[tuple[float, str, bool]]] = {}  # channel → (time, author, asked a question)
         self.stats: dict[str, int] = {}
         self.posted = 0
@@ -368,6 +376,10 @@ class NewsMonitor:
         if verdict is None:
             return
         kind, who = verdict
+        if kind == XPOST:
+            xs = [s for _, s in X_RE.findall(m.get("content") or "")]
+            if xs and all(time.time() - self._x_sub.get(s, 0) < 12 * 3600 for s in xs):
+                return  # the subnet's own X post, reported (and sent to the bots) the moment it was posted
         if kind == XPOST and not who:
             xs = [s for _, s in X_RE.findall(m.get("content") or "")]
             now = time.time()
@@ -549,36 +561,17 @@ class NewsMonitor:
         free fxtwitter API fetches X for us), so one after another would see a fresh timeline only every ~5 s. Each look
         handles its own result when it arrives; what it hands out is recorded as seen BEFORE anything is posted, so two
         looks never post the same tweet. A 429 pauses every look for the time the server asks."""
-        base = "https://api.fxtwitter.com/2/profile/{}/statuses"
-        pause_until = 0.0
         answered: dict[str, int] = {}                        # looks that have come back, per account (slow start)
         looks: dict[str, set] = {h: set() for h in handles}
-
-        async def fetch(url: str) -> list | None:
-            nonlocal pause_until
-            try:
-                async with session.get(url) as r:
-                    if r.status == 429:
-                        try:
-                            wait = float(r.headers.get("Retry-After") or 30)
-                        except ValueError:
-                            wait = 30.0
-                        pause_until = time.time() + min(max(wait, 1.0), 300.0)
-                        log.warning("X timeline: too many requests (429) — pausing the look-ups for %.0f s", pause_until - time.time())
-                        return None
-                    return ((await r.json(content_type=None)).get("results") or []) if r.status == 200 else None
-            except Exception as e:
-                log.debug("X timeline failed: %s", e)
-                return None
 
         async def look(h: str) -> None:
             try:
                 # with_replies=true is the complete timeline (posts, quotes, replies, reposts). The plain
                 # one silently omits replies to others AND some of his own quote-posts, so it is only the
                 # fallback when a request fails (the service returns a 404 on ~1 request in 7).
-                items = await fetch(base.format(h) + "?with_replies=true")
-                if items is None and time.time() >= pause_until:
-                    items = await fetch(base.format(h))
+                items = await self._x_fetch(session, X_TIMELINE.format(h) + "?with_replies=true")
+                if items is None and time.time() >= self._x_pause_until:
+                    items = await self._x_fetch(session, X_TIMELINE.format(h))
                 if items is None:
                     self.stats["x_fail"] = self.stats.get("x_fail", 0) + 1
                     return
@@ -611,13 +604,108 @@ class NewsMonitor:
                 for h in handles:
                     looks[h] = {t for t in looks[h] if not t.done()}
                     limit = MAX_X_INFLIGHT if answered.get(h) else 1   # slow start: one look until the first answer is in
-                    if len(looks[h]) < limit and time.time() >= pause_until:
+                    if len(looks[h]) < limit and time.time() >= self._x_pause_until:
                         looks[h].add(asyncio.create_task(look(h)))
                 await asyncio.sleep(every)
         finally:
             for group in looks.values():
                 for t in group:
                     t.cancel()
+
+    async def _x_fetch(self, session, url: str) -> list | None:
+        """One timeline from fxtwitter, None on any failure. A 429 pauses every X look (all loops) for the time it asks."""
+        try:
+            async with session.get(url) as r:
+                if r.status == 429:
+                    try:
+                        wait = float(r.headers.get("Retry-After") or 30)
+                    except ValueError:
+                        wait = 30.0
+                    self._x_pause_until = time.time() + min(max(wait, 1.0), 300.0)
+                    log.warning("X timeline: too many requests (429) — pausing the look-ups for %.0f s",
+                                self._x_pause_until - time.time())
+                    return None
+                return ((await r.json(content_type=None)).get("results") or []) if r.status == 200 else None
+        except Exception as e:
+            log.debug("X timeline failed: %s", e)
+            return None
+
+    # ── every subnet's own X account ─────────────────────────────────────
+
+    async def subnet_x_loop(self, accounts, rate: float = 3.0) -> None:
+        """Watch every subnet's own X account (found by xsubnets.SubnetAccounts): its post is news the moment it is
+        seen — the Discord share comes minutes later (20 Oct: @vidaio_ posted at 15:03, it was shared in #85 at 15:04
+        while bots were already buying SN85). One account after another, `rate` timeline requests a second in all
+        (3/s: ~65 accounts, each every ~22 s). Its own posts and quotes count; replies (its thread's next parts too)
+        and reposts are chatter. The handles are looked up again every hour for the subnets that are due."""
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8),
+                                         headers={"User-Agent": "Mozilla/5.0 sn-monitor"}) as session:
+            await self._subnet_x_poll_loop(session, accounts, rate)
+
+    async def _subnet_x_poll_loop(self, session, accounts, rate: float, refresh_every: float = 3600.0) -> None:
+        next_refresh, turn = 0.0, 0
+        looks: dict[str, asyncio.Task] = {}
+        try:
+            while True:
+                if time.time() >= next_refresh and self.meta.subnets:
+                    next_refresh = time.time() + refresh_every
+                    if self._x_discovery is None or self._x_discovery.done():
+                        self._x_discovery = asyncio.create_task(self._x_discover(session, accounts))
+                watch = accounts.accounts()
+                order = sorted(watch)
+                if order and time.time() >= self._x_pause_until:
+                    key = order[turn % len(order)]
+                    turn += 1
+                    if key not in looks or looks[key].done():
+                        handle, netuids = watch[key]
+                        looks[key] = asyncio.create_task(self._subnet_x_look(session, handle, netuids))
+                await asyncio.sleep(1.0 / max(rate, 0.1))
+        finally:
+            for t in looks.values():
+                t.cancel()
+            if self._x_discovery is not None:
+                self._x_discovery.cancel()
+
+    async def _x_discover(self, session, accounts) -> None:
+        try:
+            before = accounts.by_netuid()
+            looked = await accounts.refresh(session, self.meta.subnets)
+            now = accounts.by_netuid()
+            if looked:
+                new = [f"SN{n} @{h}" for n, h in sorted(now.items()) if before.get(n) != h]
+                print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S')} ── X accounts of subnets: {len(now)} watched "
+                              f"({looked} looked up" + (f"; new: {', '.join(new[:12])}{' …' if len(new) > 12 else ''}" if new else "")
+                              + ")"))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("finding the subnets' X accounts failed")
+
+    async def _subnet_x_look(self, session, handle: str, netuids: set[int]) -> None:
+        try:
+            items = await self._x_fetch(session, X_TIMELINE.format(handle) + "?with_replies=true")
+            if items is None:
+                self.stats["xs_fail"] = self.stats.get("xs_fail", 0) + 1
+                return
+            self.stats["xs_polls"] = self.stats.get("xs_polls", 0) + 1
+            seen = self._x_ids.setdefault(handle.lower(), [])
+            fresh = [str(t.get("id")) for t in items if str(t.get("id")) not in seen]
+            # decided and recorded before any await, like the const looks: the first look at an account only records
+            new = [t for t in x_new(items, set(seen)) if x_own_post(t, handle)] if seen else []
+            seen.extend(fresh)
+            del seen[:-200]
+            if fresh:
+                self._save_state()
+            for t in new:
+                if time.time() - float(t.get("created_timestamp") or time.time()) > X_SUBNET_MAX_AGE_S:
+                    continue   # posted while the monitor was down: not news any more
+                n = next(iter(netuids)) if len(netuids) == 1 else self._x_subnet(t)
+                self._x_sub[str(t.get("id"))] = time.time()
+                await self._post_x(t, handle, feed_kind="x_subnet", netuid=n if n in netuids else None)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("X look at subnet account @%s failed", handle)
 
     def _x_subnet(self, t: dict) -> int | None:
         """Which subnet a tweet is about: 'SN81' / 'subnet 81', an @handle containing a subnet's name, or the name itself
@@ -635,8 +723,10 @@ class NewsMonitor:
                 return n
         return subnet_named(text, {n: i.name for n, i in self.meta.subnets.items() if n})
 
-    async def _post_x(self, t: dict, handle: str, parent: dict | None = None) -> None:
-        """`parent` is the tweet he replied to (when the timeline carries it) — shown as context."""
+    async def _post_x(self, t: dict, handle: str, parent: dict | None = None, feed_kind: str = "x_account",
+                      netuid: int | None = None) -> None:
+        """`parent` is the tweet he replied to (when the timeline carries it) — shown as context. A subnet's own account
+        (`feed_kind` "x_subnet") names its subnet in `netuid`; any other account's subnet is read from the tweet."""
         a = t.get("author") or {}
         rb = t.get("reposted_by") or {}
         me = rb if rb else a
@@ -663,9 +753,9 @@ class NewsMonitor:
             pa = parent.get("author") or {}
             desc += (f"\n\n**In reply to {pa.get('name', '')} (@{pa.get('screen_name', '')}):**\n> "
                      + parent["text"].replace("\n", "\n> ")[:600])
-        n = self._x_subnet(t)
+        n = netuid if feed_kind == "x_subnet" else self._x_subnet(t)
         # a repost is dated by the original tweet — for the bots it is news now
-        self._publish(n, "x_account", me.get("screen_name") or handle, f"x @{handle}", text, t.get("url") or "",
+        self._publish(n, feed_kind, me.get("screen_name") or handle, f"x @{handle}", text, t.get("url") or "",
                       time.time() if rb or not t.get("created_timestamp") else float(t["created_timestamp"]))
         info = self.meta.info(n) if n is not None else None
         p0 = self.price_now(n) if n is not None else None
@@ -721,11 +811,13 @@ class NewsMonitor:
                 self.channels[cid].last_id = max(int(last), 0) or self.channels[cid].last_id
         self._x_seen = {k: v for k, v in state.get("x", {}).items() if time.time() - v < 12 * 3600}
         self._x_ids = state.get("x_ids", {})
+        self._x_sub = {k: v for k, v in state.get("x_sub", {}).items() if time.time() - v < 12 * 3600}
 
     def _save_state(self) -> None:
         try:
             STATE_FILE.write_text(json.dumps({"last": {c.id: c.last_id for c in self.channels.values()},
-                                              "x": self._x_seen, "x_ids": self._x_ids}))
+                                              "x": self._x_seen, "x_ids": self._x_ids,
+                                              "x_sub": {k: v for k, v in self._x_sub.items() if time.time() - v < 12 * 3600}}))
         except OSError:
             pass
 
@@ -765,6 +857,12 @@ def x_by(t: dict, handle: str) -> bool:
     h = handle.lower()
     return ((t.get("author") or {}).get("screen_name", "").lower() == h
             or (t.get("reposted_by") or {}).get("screen_name", "").lower() == h)
+
+
+def x_own_post(t: dict, handle: str) -> bool:
+    """A subnet account's own post or quote — not its replies (its thread's next parts included) and not its reposts."""
+    return ((t.get("author") or {}).get("screen_name", "").lower() == handle.lower()
+            and not t.get("reposted_by") and not t.get("replying_to"))
 
 
 def x_new(items: list[dict], known: set[str], now: float | None = None) -> list[dict]:

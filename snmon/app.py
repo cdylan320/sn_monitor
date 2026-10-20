@@ -32,6 +32,7 @@ from .news import NewsMonitor
 from .rpc import Rpc
 from .signals import Signals, parse_trigger
 from .trend import TrendBoard, TrendMonitor, parse_timeframes
+from .xsubnets import SubnetAccounts
 
 log = logging.getLogger("snmon")
 
@@ -475,12 +476,17 @@ class App:
             return
         if self.cfg.news_x_accounts:
             asyncio.create_task(self.news.x_loop(self.cfg.news_x_accounts, self.cfg.news_x_poll_seconds))
+        subnet_x = ""
+        if self.cfg.news_x_subnets:
+            accounts = SubnetAccounts(self.cfg.news_x_subnet_handles, skip=set(self.cfg.news_x_accounts))
+            asyncio.create_task(self.news.subnet_x_loop(accounts, self.cfg.news_x_subnet_rate))
+            subnet_x = f" + every subnet's own account ({len(accounts.by_netuid())} known, more being looked up)"
         n = sum(1 for c in self.news.channels.values() if c.netuid is not None)
         teams = sum(1 for c in self.news.channels.values() if c.team_users or c.team_roles)
         print(fmt.dim(f"{now_str()} ── news monitor live in {self.news.guild_name} as "
                       f"{(self.news.client.user or {}).get('username')} · {n} subnet channels "
                       f"({teams} with a team detected) · {len(self.news.staff_roles)} staff roles · X: "
-                      + ", ".join("@" + h for h in self.cfg.news_x_accounts)))
+                      + ", ".join("@" + h for h in self.cfg.news_x_accounts) + subnet_x))
         if self.cfg.startup_message and not self.cfg.dry_run and not self._recent_start("last_start_news"):
             await self.news_discord.send({"embeds": [{
                 "title": "🟢 News monitor is live",

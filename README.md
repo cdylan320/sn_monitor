@@ -242,6 +242,14 @@ channels. Server-wide staff roles count too.
 **How messages arrive.** In real time over Discord's gateway. A light sweep every 20s acts as
 a safety net, and after a restart, posts from the last 30 minutes are caught up.
 
+**X, directly.** A post shared in a channel is usually minutes behind the post itself, so X is watched too:
+the accounts in `NEWS_X_ACCOUNTS` (const), and **every subnet's own X account** (`NEWS_X_SUBNETS`). Those are found
+automatically — the X account the subnet's website links most (else its GitHub README) — and only watched when its
+X profile points back to the subnet (its website, "SN85" in the bio, or its name). 61 of 128 subnets had one on 20 Oct;
+`NEWS_X_SUBNET_HANDLES=72:NATIXNetwork,21:-` adds or corrects them by hand. They are looked at one after another,
+`NEWS_X_SUBNET_RATE` (3) requests a second in all — each about every 20 s. A subnet's own post or quote becomes a card
+and goes to the trading bots at once (kind `x_subnet`); a later share of it in Discord is not reported again.
+
 **Account:** a separate alt account that's a member of the server. Its token goes in
 `NEWS_DISCORD_TOKEN`. Automating a user account breaks Discord's terms, so the alt is what's at
 risk, not your main account. To check the login and preview what would be posted:
@@ -282,6 +290,7 @@ snmon/lifecycle.py subnet lifecycle: registrations, removals, owners, identities
 snmon/signals.py   reversal signals: rule, cards, 24h outcome tracking, built-in backtest
 snmon/chart.py     candlestick chart PNG for trend and signal cards
 snmon/gateway.py   read-only Discord user client (REST + gateway) for the news monitor
-snmon/news.py      news classification, team detection, news cards, market reaction
+snmon/news.py      news classification, team detection, news cards, market reaction, X watching
+snmon/xsubnets.py  each subnet's own X account: found from its website / README, checked on its X profile
 snmon/app.py       wiring, backfill, 24h reference, console UI
 ```

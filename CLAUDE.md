@@ -33,13 +33,18 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
 
 ## Trading rules (the user's decisions; `README.md` and `.env.example` of sn_trader are the reference)
 - New subnet (start call): sells everything, stakes all (`LAUNCH_MAX_STAKE_TAO=0`), sent in the block after the start call
-  is seen (same block when the start call is visible in the mempool). Exit: first 2% drop from the high, from block one.
+  is seen (same block when the start call is visible in the mempool). Exit: no floor; not acted on in the start call's
+  block and the next 5 (`LAUNCH_GRACE_BLOCKS`; SN59: ×3, then −21%, −17%, −17%, +3%, +8%); then a trail from the high of
+  8% from +6, 5% from +10, 2% from +15 (`LAUNCH_TRAIL_STEPS`).
 - Coldkey swap (subnet sale): all-in like a new subnet (`SWAP_MAX_STAKE_TAO=0`); a pending swap is checked against the
   owner's announcement first (a swap the chain will refuse is not traded). Exit 1%.
 - const post, rename (name change, or a new/changed GitHub link or website — `RENAME_LINKS`): up to 10 τ from the free
   balance (everything sold first only if short). Exit 1%.
-- Reversal, dump (≥70 τ with ≥1% drop, or ≥5% drop alone; also from the mempool), news (from the monitor's feed): free
-  balance, ≤5 τ in pools under 5,000 τ; exit 1% stop, 1% trail, or no new high for 8 blocks.
+- Reversal, dump (≥70 τ with ≥1% drop, or ≥5% drop alone; also from the mempool; never in a pool under 5,500 τ —
+  `DUMP_MIN_POOL_TAO`), news (from the monitor's feed, incl. `x_subnet`: a subnet's own X post): free balance, ≤5 τ in
+  pools under 5,000 τ; exit 1% stop, 1% trail, or no new high for 25 blocks.
+- const: a post naming no subnet but replying to / mentioning someone is matched through that person's X profile (a
+  subnet owner's bio names the subnet: @0xarrash → SN8).
 - Never buy the 3 subnets the chain would remove first (`PRUNE_RISK_COUNT`). Buys: tolerance 16% → 32%; all-in buys
   `URGENT_TOLERANCE_PCT=1000`; unstakes have no price limit. Tips buy nothing (the chain orders by arrival).
 
