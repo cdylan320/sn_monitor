@@ -130,6 +130,7 @@ class NewsMonitor:
         self._fetching: set[str] = set()
         self._member_lookup_off = False
         self._x_ids: dict[str, list[str]] = {}  # X handle → tweet ids already seen
+        self._last: dict[str, int] = {}          # channel → last message id, as saved (also for channels not loaded)
         self._x_sub: dict[str, float] = {}       # tweet id → when a subnet's own account was seen posting it
         self._x_pause_until = 0.0                # fxtwitter answered 429: no X request before this (every X loop)
         self._x_discovery: asyncio.Task | None = None
@@ -143,11 +144,17 @@ class NewsMonitor:
     # ── lifecycle ────────────────────────────────────────────────────────
 
     async def start(self) -> None:
-        await self.client.start()
+        """The Discord side: the account's gateway, then the server's channels and roles. Raises when it cannot; it can
+        be called again later (the X side runs without it — `restore_x` first)."""
+        if self.client.user is None:           # not started, or its start failed: a fresh session
+            await self.client.close()
+            await self.client.start()
         await self.load_structure()
-        self._restore_state()
+        self._restore_state(x=False)
         self.client.on_event = self._on_event
         self.client.on_ready = self._on_gateway_ready
+        if self.client.connected:               # started again later: the gateway is up already, READY has passed
+            await self._on_gateway_ready()
         await self._catch_up()
         self.ready = True
         asyncio.create_task(self._sweep_loop())
@@ -835,21 +842,30 @@ class NewsMonitor:
 
     # ── persistence ──────────────────────────────────────────────────────
 
-    def _restore_state(self) -> None:
+    def restore_x(self) -> None:
+        """The X posts already seen — before the X loops start, with or without Discord."""
+        self._restore_state(x=True)
+
+    def _restore_state(self, x: bool = True) -> None:
         try:
             state = json.loads(STATE_FILE.read_text())
         except (OSError, ValueError):
             return
-        for cid, last in state.get("last", {}).items():
+        self._last = {cid: int(last) for cid, last in state.get("last", {}).items()}
+        for cid, last in self._last.items():
             if cid in self.channels:
-                self.channels[cid].last_id = max(int(last), 0) or self.channels[cid].last_id
+                self.channels[cid].last_id = max(last, 0) or self.channels[cid].last_id
+        if not x:
+            return
         self._x_seen = {k: v for k, v in state.get("x", {}).items() if time.time() - v < 12 * 3600}
         self._x_ids = state.get("x_ids", {})
         self._x_sub = {k: v for k, v in state.get("x_sub", {}).items() if time.time() - v < 12 * 3600}
 
     def _save_state(self) -> None:
         try:
-            STATE_FILE.write_text(json.dumps({"last": {c.id: c.last_id for c in self.channels.values()},
+            # channels not loaded (Discord down) keep their saved position
+            last = {**self._last, **{c.id: c.last_id for c in self.channels.values()}}
+            STATE_FILE.write_text(json.dumps({"last": last,
                                               "x": self._x_seen, "x_ids": self._x_ids,
                                               "x_sub": {k: v for k, v in self._x_sub.items() if time.time() - v < 12 * 3600}}))
         except OSError:

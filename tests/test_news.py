@@ -292,6 +292,78 @@ def test_x_a_429_pauses_the_looks_for_the_time_the_server_asks():
     assert len([t for t in tl.times if t >= 1.0]) >= 3, tl.times    # after the pause the looks go on
 
 
+
+def test_x_is_watched_even_when_discord_fails_and_discord_is_tried_again_until_it_works():
+    # 21 Oct: the news account was removed from the Bittensor server; after a restart the monitor watched nothing at all,
+    # not even const and the subnets' X accounts
+    import types
+    from snmon import news as news_mod
+    from snmon.app import App
+
+    async def go():
+        started, tries = [], []
+
+        class News:
+            channels, staff_roles, guild_name, client = {}, set(), "Bittensor", types.SimpleNamespace(user={"username": "u"})
+            judge = types.SimpleNamespace(mode="rules")
+
+            def restore_x(self):
+                started.append("restore_x")
+
+            async def start(self):
+                tries.append(1)
+                if len(tries) < 3:
+                    raise RuntimeError("the news account is not in a Bittensor server")
+
+            async def x_loop(self, handles, every):
+                started.append(("x", tuple(handles)))
+
+            async def subnet_x_loop(self, accounts, rate):
+                started.append(("subnet_x", rate))
+
+        class Hook:
+            async def start(self):
+                pass
+
+        app = App.__new__(App)
+        app.news, app.news_discord = News(), Hook()
+        app.cfg = types.SimpleNamespace(news_x_accounts=["const_reborn"], news_x_poll_seconds=0.5, news_x_subnets=True,
+                                        news_x_subnet_handles={}, news_x_subnet_rate=6.0, startup_message=False,
+                                        dry_run=True)
+        retry = App._news_discord_retry
+        App._news_discord_retry = lambda self, why: retry(self, why, every=0.01)
+        try:
+            await app._news_start()
+            for _ in range(50):
+                await asyncio.sleep(0.01)
+        finally:
+            App._news_discord_retry = retry
+        assert started[0] == "restore_x" and ("x", ("const_reborn",)) in started and ("subnet_x", 6.0) in started
+        assert len(tries) == 3                                        # failed, failed, then Discord runs: no more tries
+
+    asyncio.run(go())
+
+
+def test_channels_not_loaded_keep_their_saved_position():
+    import json
+    import tempfile
+    from pathlib import Path
+    from snmon import news as news_mod
+    old = news_mod.STATE_FILE
+    news_mod.STATE_FILE = Path(tempfile.mkdtemp()) / "news_state.json"
+    try:
+        news_mod.STATE_FILE.write_text(json.dumps({"last": {"C1": 111, "C2": 222}, "x_ids": {"const_reborn": ["9"]}}))
+        m = NewsMonitor("x", None, None, price_now=lambda n: 0, change=lambda n, b: 0.0)
+        m.restore_x()                                  # Discord is down: no channels loaded
+        assert m._x_ids == {"const_reborn": ["9"]}
+        m._x_ids["const_reborn"].append("10")
+        m._save_state()                                # an X look saves: the channel positions must survive
+        saved = json.loads(news_mod.STATE_FILE.read_text())
+        assert saved["last"] == {"C1": 111, "C2": 222} and saved["x_ids"]["const_reborn"] == ["9", "10"]
+    finally:
+        news_mod.STATE_FILE = old
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

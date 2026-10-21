@@ -472,10 +472,13 @@ class App:
     async def _news_start(self) -> None:
         try:
             await self.news_discord.start()
-            await self.news.start()
         except Exception as e:
             log.error("news monitor could not start: %s", e)
             return
+        # X needs no Discord account: const and the subnets' own accounts are watched even when Discord fails (21 Oct:
+        # the news account was removed from the Bittensor server, and after a restart nothing at all was watched)
+        self.news.restore_x()
+        why = await self._news_discord()
         if self.cfg.news_x_accounts:
             asyncio.create_task(self.news.x_loop(self.cfg.news_x_accounts, self.cfg.news_x_poll_seconds))
         subnet_x = ""
@@ -483,13 +486,13 @@ class App:
             accounts = SubnetAccounts(self.cfg.news_x_subnet_handles, skip=set(self.cfg.news_x_accounts))
             asyncio.create_task(self.news.subnet_x_loop(accounts, self.cfg.news_x_subnet_rate))
             subnet_x = f" + every subnet's own account ({len(accounts.by_netuid())} known, more being looked up)"
-        n = sum(1 for c in self.news.channels.values() if c.netuid is not None)
-        teams = sum(1 for c in self.news.channels.values() if c.team_users or c.team_roles)
-        print(fmt.dim(f"{now_str()} ── news monitor live in {self.news.guild_name} as "
-                      f"{(self.news.client.user or {}).get('username')} · {n} subnet channels "
-                      f"({teams} with a team detected) · {len(self.news.staff_roles)} staff roles · X: "
-                      + ", ".join("@" + h for h in self.cfg.news_x_accounts) + subnet_x
-                      + f" · news judged by {self.news.judge.mode}"))
+        x = " · X: " + ", ".join("@" + h for h in self.cfg.news_x_accounts) + subnet_x
+        if why:
+            print(fmt.dim(f"{now_str()} ── news monitor live on X only{x} · news judged by {self.news.judge.mode}"))
+            log.error("news: Discord channels NOT watched: %s — retrying every 5 minutes", why)
+            asyncio.create_task(self._news_discord_retry(why))
+            return
+        print(fmt.dim(f"{now_str()} ── news monitor live in {self._news_where()}{x} · news judged by {self.news.judge.mode}"))
         if self.cfg.startup_message and not self.cfg.dry_run and not self._recent_start("last_start_news"):
             await self.news_discord.send({"embeds": [{
                 "title": "🟢 News monitor is live",
@@ -499,6 +502,31 @@ class App:
                                 "price at the post and the market reaction after 5m, 15m and 1h."),
                 "color": 0x5865F2,
             }], "allowed_mentions": {"parse": []}})
+
+    def _news_where(self) -> str:
+        n = sum(1 for c in self.news.channels.values() if c.netuid is not None)
+        teams = sum(1 for c in self.news.channels.values() if c.team_users or c.team_roles)
+        return (f"{self.news.guild_name} as {(self.news.client.user or {}).get('username')} · {n} subnet channels "
+                f"({teams} with a team detected) · {len(self.news.staff_roles)} staff roles")
+
+    async def _news_discord(self) -> str:
+        """Start the Discord side of the news: '' when it runs, else why not."""
+        try:
+            await self.news.start()
+            return ""
+        except Exception as e:
+            return str(e) or type(e).__name__
+
+    async def _news_discord_retry(self, why: str, every: float = 300.0) -> None:
+        """Discord could not start (the account left the server, a bad token…): try again until it works — rejoining
+        the server is enough, no restart needed. A new reason is logged once."""
+        while why:
+            await asyncio.sleep(every)
+            now = await self._news_discord()
+            if now and now != why:
+                log.error("news: Discord channels still NOT watched: %s — retrying every 5 minutes", now)
+            why = now
+        print(fmt.dim(f"{now_str()} ── news: Discord channels watched again in {self._news_where()}"))
 
     async def _trend_gap_loop(self) -> None:
         """History nodes drop requests under load; retry any missing bars every 15 minutes."""
