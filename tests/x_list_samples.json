@@ -1,0 +1,351 @@
+{
+ "quote": {
+  "__typename": "Tweet",
+  "core": {
+   "user_results": {
+    "result": {
+     "__typename": "User",
+     "avatar": {
+      "image_url": "https://pbs.twimg.com/profile_images/1782713445986525184/nLjN-iq0_normal.jpg"
+     },
+     "core": {
+      "created_at": "Sun Mar 03 21:58:56 +0000 2024",
+      "name": "Macrocosmos",
+      "screen_name": "MacrocosmosAI"
+     },
+     "rest_id": "1764410143217700864"
+    }
+   }
+  },
+  "legacy": {
+   "created_at": "Wed Oct 21 18:53:40 +0000 2026",
+   "entities": {},
+   "favorite_count": 1,
+   "full_text": "Never stop training.",
+   "id_str": "2112980655294517424",
+   "is_quote_status": true,
+   "reply_count": 0,
+   "retweet_count": 0,
+   "user_id_str": "1764410143217700864"
+  },
+  "quoted_status_result": {
+   "result": {
+    "__typename": "Tweet",
+    "core": {
+     "user_results": {
+      "result": {
+       "__typename": "User",
+       "avatar": {
+        "image_url": "https://pbs.twimg.com/profile_images/1971185375927308288/l00D_xL0_normal.jpg"
+       },
+       "core": {
+        "created_at": "Mon Jul 21 10:04:04 +0000 2025",
+        "name": "IOTA ・ SN9",
+        "screen_name": "IOTA_SN9"
+       },
+       "rest_id": "1947235813076668416"
+      }
+     }
+    },
+    "legacy": {
+     "created_at": "Wed Oct 21 17:03:08 +0000 2026",
+     "entities": {
+      "media": [
+       {
+        "expanded_url": "https://x.com/IOTA_SN9/status/2112952838489837824/video/1",
+        "id_str": "2112949662583812096",
+        "media_url_https": "https://pbs.twimg.com/amplify_video_thumb/2112949662583812096/img/2fNjUrOG0Igu1BGd.jpg",
+        "type": "video",
+        "url": "https://t.co/42rFFN3QXc"
+       }
+      ]
+     },
+     "extended_entities": {
+      "media": [
+       {
+        "expanded_url": "https://x.com/IOTA_SN9/status/2112952838489837824/video/1",
+        "id_str": "2112949662583812096",
+        "media_url_https": "https://pbs.twimg.com/amplify_video_thumb/2112949662583812096/img/2fNjUrOG0Igu1BGd.jpg",
+        "type": "video",
+        "url": "https://t.co/42rFFN3QXc"
+       }
+      ]
+     },
+     "favorite_count": 34,
+     "full_text": "The swarm just got faster. \n\nWe've eliminated one of decentralized training's biggest bottlenecks, speeding up merging by 5x.\n\nWe're redefining the shape of AI training.\n\nIntroducing the latest evolution of IOTA. https://t.co/42rFFN3QXc",
+     "id_str": "2112952838489837824",
+     "is_quote_status": false,
+     "reply_count": 3,
+     "retweet_count": 3,
+     "user_id_str": "1947235813076668416"
+    },
+    "rest_id": "2112952838489837824"
+   }
+  },
+  "rest_id": "2112980655294517424"
+ },
+ "post": {
+  "__typename": "Tweet",
+  "core": {
+   "user_results": {
+    "result": {
+     "__typename": "User",
+     "avatar": {
+      "image_url": "https://pbs.twimg.com/profile_images/2096618357327798272/pE9qrx-A_normal.jpg"
+     },
+     "core": {
+      "created_at": "Fri Sep 04 02:29:50 +0000 2026",
+      "name": "EveryFrame Studio",
+      "screen_name": "xeveryframe"
+     },
+     "rest_id": "2095699038373130240"
+    }
+   }
+  },
+  "legacy": {
+   "created_at": "Wed Oct 21 18:43:25 +0000 2026",
+   "entities": {
+    "media": [
+     {
+      "expanded_url": "https://x.com/xeveryframe/status/2112978075311014316/video/1",
+      "id_str": "2112977168451964928",
+      "media_url_https": "https://pbs.twimg.com/amplify_video_thumb/2112977168451964928/img/UwjtHV2iZnq57QMR.jpg",
+      "type": "video",
+      "url": "https://t.co/RkTZdnw0zO"
+     }
+    ]
+   },
+   "extended_entities": {
+    "media": [
+     {
+      "expanded_url": "https://x.com/xeveryframe/status/2112978075311014316/video/1",
+      "id_str": "2112977168451964928",
+      "media_url_https": "https://pbs.twimg.com/amplify_video_thumb/2112977168451964928/img/UwjtHV2iZnq57QMR.jpg",
+      "type": "video",
+      "url": "https://t.co/RkTZdnw0zO"
+     }
+    ]
+   },
+   "favorite_count": 0,
+   "full_text": "👀\n\nNow live on EveryFrame: FLUX 3 MAX by Black Forest Labs. \n\n1080p picture with outstanding sound generated alongside your creation. \n\nUp to 20s in one take in any aspect ratio,  from 21:9 to 9:16, plus first &amp; last frame control.\n\n💥Launch price: only 125 credits for 5s at https://t.co/RkTZdnw0zO",
+   "id_str": "2112978075311014316",
+   "is_quote_status": false,
+   "reply_count": 0,
+   "retweet_count": 0,
+   "user_id_str": "2095699038373130240"
+  },
+  "note_tweet": {
+   "note_tweet_results": {
+    "result": {
+     "entity_set": {
+      "urls": [
+       {
+        "expanded_url": "http://app.everyframe.studio",
+        "url": "https://t.co/XrXRzwBJBy"
+       }
+      ]
+     },
+     "text": "👀\n\nNow live on EveryFrame: FLUX 3 MAX by Black Forest Labs. \n\n1080p picture with outstanding sound generated alongside your creation. \n\nUp to 20s in one take in any aspect ratio,  from 21:9 to 9:16, plus first & last frame control.\n\n💥Launch price: only 125 credits for 5s at 720p, Ends Nov 6.\n\nEvery model worth using, one studio, one subscription only at\n\n👇🏻\n\nhttps://t.co/XrXRzwBJBy\n\n#Bittensor #TAO #SN117 #videoai"
+    }
+   }
+  },
+  "rest_id": "2112978075311014316"
+ },
+ "repost": {
+  "__typename": "Tweet",
+  "core": {
+   "user_results": {
+    "result": {
+     "__typename": "User",
+     "avatar": {
+      "image_url": "https://pbs.twimg.com/profile_images/1918760460238602240/09AFixpX_normal.jpg"
+     },
+     "core": {
+      "created_at": "Wed Apr 30 19:03:53 +0000 2025",
+      "name": "True Performance Network",
+      "screen_name": "TPN_Labs"
+     },
+     "rest_id": "1917656063383400448"
+    }
+   }
+  },
+  "legacy": {
+   "created_at": "Wed Oct 21 17:57:53 +0000 2026",
+   "entities": {},
+   "favorite_count": 0,
+   "full_text": "RT @MuffinDannyH: I always prefer the Bittensor subnets that actually ship a consumer product.\n\nMost of them stop at models and leaderboard…",
+   "id_str": "2112966620402368556",
+   "is_quote_status": true,
+   "reply_count": 0,
+   "retweet_count": 1,
+   "retweeted_status_result": {
+    "result": {
+     "__typename": "Tweet",
+     "core": {
+      "user_results": {
+       "result": {
+        "__typename": "User",
+        "avatar": {
+         "image_url": "https://pbs.twimg.com/profile_images/1965710952235737089/ESvw6hww_normal.jpg"
+        },
+        "core": {
+         "created_at": "Thu Dec 01 21:06:52 +0000 2022",
+         "name": "Danny Herrmann",
+         "screen_name": "MuffinDannyH"
+        },
+        "rest_id": "1598422897919402008"
+       }
+      }
+     },
+     "legacy": {
+      "created_at": "Wed Oct 21 16:37:52 +0000 2026",
+      "entities": {},
+      "favorite_count": 1,
+      "full_text": "I always prefer the Bittensor subnets that actually ship a consumer product.\n\nMost of them stop at models and leaderboards. The ones that build something you can just open and use stand out to me.\n\nTPN moving toward a consumer interface is the right direction. You can recommend",
+      "id_str": "2112946483540681191",
+      "is_quote_status": true,
+      "reply_count": 1,
+      "retweet_count": 1,
+      "user_id_str": "1598422897919402008"
+     },
+     "note_tweet": {
+      "note_tweet_results": {
+       "result": {
+        "entity_set": {
+         "urls": []
+        },
+        "media": {},
+        "text": "I always prefer the Bittensor subnets that actually ship a consumer product.\n\nMost of them stop at models and leaderboards. The ones that build something you can just open and use stand out to me.\n\nTPN moving toward a consumer interface is the right direction. You can recommend it to anyone they don’t need to understand the technical setup. As long as it runs on their phone or desktop, that’s enough.\n\nReal adoption starts when the product is usable anytime, not just when miners are competing.\n\nbittensor:native"
+       }
+      }
+     },
+     "quoted_status_result": {
+      "result": {
+       "__typename": "Tweet",
+       "core": {
+        "user_results": {
+         "result": {
+          "__typename": "User",
+          "avatar": {
+           "image_url": "https://pbs.twimg.com/profile_images/1918760460238602240/09AFixpX_normal.jpg"
+          },
+          "core": {
+           "created_at": "Wed Apr 30 19:03:53 +0000 2025",
+           "name": "True Performance Network",
+           "screen_name": "TPN_Labs"
+          },
+          "rest_id": "1917656063383400448"
+         }
+        }
+       },
+       "legacy": {
+        "created_at": "Wed Oct 21 08:30:00 +0000 2026",
+        "entities": {
+         "media": [
+          {
+           "expanded_url": "https://x.com/TPN_Labs/status/2112823706468691986/video/1",
+           "id_str": "2111104161215397888",
+           "media_url_https": "https://pbs.twimg.com/amplify_video_thumb/2111104161215397888/img/kDMv7Q16g8vzJA9M.jpg",
+           "type": "video",
+           "url": "https://t.co/61bJcaW0Ev"
+          }
+         ]
+        },
+        "extended_entities": {
+         "media": [
+          {
+           "expanded_url": "https://x.com/TPN_Labs/status/2112823706468691986/video/1",
+           "id_str": "2111104161215397888",
+           "media_url_https": "https://pbs.twimg.com/amplify_video_thumb/2111104161215397888/img/kDMv7Q16g8vzJA9M.jpg",
+           "type": "video",
+           "url": "https://t.co/61bJcaW0Ev"
+          }
+         ]
+        },
+        "favorite_count": 23,
+        "full_text": "Upcoming: TPN Product Launch\n\nIn November, we’ll launch a consumer facing product powered by TPN.\n\nThe product will serve as one of the distribution layers for TPN Labs models, acting as an interface between our models and every day users.\n\nWe are excited for what's to come! https://t.co/61bJcaW0Ev",
+        "id_str": "2112823706468691986",
+        "is_quote_status": false,
+        "reply_count": 2,
+        "retweet_count": 6,
+        "user_id_str": "1917656063383400448"
+       },
+       "rest_id": "2112823706468691986"
+      }
+     },
+     "rest_id": "2112946483540681191"
+    }
+   },
+   "user_id_str": "1917656063383400448"
+  },
+  "rest_id": "2112966620402368556"
+ },
+ "reply": {
+  "__typename": "Tweet",
+  "core": {
+   "user_results": {
+    "result": {
+     "__typename": "User",
+     "avatar": {
+      "image_url": "https://pbs.twimg.com/profile_images/2041904385530425344/fzMNWtZv_normal.png"
+     },
+     "core": {
+      "created_at": "Tue Mar 25 16:00:11 +0000 2025",
+      "name": "Yanez.ai",
+      "screen_name": "yanez__ai"
+     },
+     "rest_id": "1904563934457151488"
+    }
+   }
+  },
+  "legacy": {
+   "created_at": "Wed Oct 21 17:34:15 +0000 2026",
+   "entities": {
+    "media": [
+     {
+      "expanded_url": "https://x.com/yanez__ai/status/2112960671185027203/photo/1",
+      "id_str": "2112960664625098752",
+      "media_url_https": "https://pbs.twimg.com/media/HVK-h49aMAAZDvG.jpg",
+      "type": "photo",
+      "url": "https://t.co/dbR7wzYRpn"
+     },
+     {
+      "expanded_url": "https://x.com/yanez__ai/status/2112960671185027203/photo/1",
+      "id_str": "2112960668865642496",
+      "media_url_https": "https://pbs.twimg.com/media/HVK-iIwbwAAEpzM.jpg",
+      "type": "photo",
+      "url": "https://t.co/dbR7wzYRpn"
+     }
+    ]
+   },
+   "extended_entities": {
+    "media": [
+     {
+      "expanded_url": "https://x.com/yanez__ai/status/2112960671185027203/photo/1",
+      "id_str": "2112960664625098752",
+      "media_url_https": "https://pbs.twimg.com/media/HVK-h49aMAAZDvG.jpg",
+      "type": "photo",
+      "url": "https://t.co/dbR7wzYRpn"
+     },
+     {
+      "expanded_url": "https://x.com/yanez__ai/status/2112960671185027203/photo/1",
+      "id_str": "2112960668865642496",
+      "media_url_https": "https://pbs.twimg.com/media/HVK-iIwbwAAEpzM.jpg",
+      "type": "photo",
+      "url": "https://t.co/dbR7wzYRpn"
+     }
+    ]
+   },
+   "favorite_count": 3,
+   "full_text": "Can this robot Pulse too? https://t.co/dbR7wzYRpn",
+   "id_str": "2112960671185027203",
+   "in_reply_to_screen_name": "yanez__ai",
+   "in_reply_to_status_id_str": "2112960651329224953",
+   "is_quote_status": false,
+   "reply_count": 0,
+   "retweet_count": 0,
+   "user_id_str": "1904563934457151488"
+  },
+  "rest_id": "2112960671185027203"
+ }
+}

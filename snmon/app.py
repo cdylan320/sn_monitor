@@ -32,6 +32,7 @@ from .news import NewsMonitor
 from .rpc import Rpc
 from .signals import Signals, parse_trigger
 from .trend import TrendBoard, TrendMonitor, parse_timeframes
+from .xlist import XList
 from .xsubnets import SubnetAccounts
 from .judge import NewsJudge
 
@@ -487,6 +488,10 @@ class App:
             accounts = SubnetAccounts(self.cfg.news_x_subnet_handles, skip=set(self.cfg.news_x_accounts))
             asyncio.create_task(self.news.subnet_x_loop(accounts, self.cfg.news_x_subnet_rate))
             subnet_x = f" + every subnet's own account ({len(accounts.by_netuid())} known, more being looked up)"
+            if self.cfg.news_x_list and self.cfg.x_auth_token and self.cfg.x_ct0:
+                xlist = XList(self.cfg.x_auth_token, self.cfg.x_ct0)
+                asyncio.create_task(self.news.subnet_x_list_loop(xlist, accounts, self.cfg.news_x_list_seconds))
+                subnet_x += " (also in one private X list)"
         why = await self._news_discord()
         x = " · X: " + ", ".join("@" + h for h in self.cfg.news_x_accounts) + subnet_x
         if why:
@@ -496,6 +501,7 @@ class App:
             return
         print(fmt.dim(f"{now_str()} ── news monitor live in {self._news_where()}{x} · news judged by {self.news.judge.mode}"))
         if self.cfg.startup_message and not self.cfg.dry_run and not self._recent_start("last_start_news"):
+            n = sum(1 for c in self.news.channels.values() if c.netuid is not None)
             await self.news_discord.send({"embeds": [{
                 "title": "🟢 News monitor is live",
                 "description": (f"Watching **{n} subnet channels** in **{self.news.guild_name}** in real time. "
@@ -727,7 +733,11 @@ class App:
                              f"passive {self.news.stats.get('PASSIVE_UPDATE_V1', 0) + self.news.stats.get('PASSIVE_UPDATE_V2', 0)}"
                              f", sweep {self.news.stats.get('sweep', 0)}, X checks {self.news.stats.get('x_polls', 0)} ok / {self.news.stats.get('x_fail', 0)} failed"
                              f", subnet X checks {self.news.stats.get('xs_polls', 0)} ok / {self.news.stats.get('xs_fail', 0)} failed"
-                             f" ({self.news.stats.get('xs_retry', 0)} retries))"
+                             f" ({self.news.stats.get('xs_retry', 0)} retries)"
+                             + (f", X list reads {self.news.stats.get('xl_polls', 0)} ok / {self.news.stats.get('xl_fail', 0)} failed"
+                                + (" (OFF: login refused)" if self.news.stats.get("xl_off") else "")
+                                + f", first seen by: list {self.news.stats.get('xl_first', 0)}, fxtwitter {self.news.stats.get('xs_first', 0)}"
+                                if self.cfg.news_x_list and self.cfg.x_auth_token else "") + ")"
                              if self.news else "")))
 
     async def _startup_message(self) -> None:

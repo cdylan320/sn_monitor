@@ -250,6 +250,11 @@ X profile points back to the subnet (its website, "SN85" in the bio, or its name
 `NEWS_X_SUBNET_RATE` (12) requests a second in all — each about every 5.5 s; a failed look (the free API fails ~40% of
 requests) is tried again at once, up to 2 times. A subnet's own post or quote becomes a card
 and goes to the trading bots at once (kind `x_subnet`); a later share of it in Discord is not reported again.
+With an X login (`X_AUTH_TOKEN` / `X_CT0`, the x.com cookies), all those accounts are also read in **one** request: a
+private X list the monitor makes and keeps up to date (`data/x_list.json`), ~0.6 s for all of them, about every
+`NEWS_X_LIST_SECONDS` (2) — X allows 500 reads per 15 minutes. fxtwitter goes on next to it; whichever sees a post first
+sends it. X does not allow automated reading and may lock the account; if the login stops working, fxtwitter goes on
+alone (the 5-minute status line says "OFF: login refused").
 
 **News check.** Every post about a subnet is judged before it goes to the bots: is it *important* news — a product
 launch, big progress, funding or a new investor, revenue / customers / contracts, a notable partnership, a listing, a

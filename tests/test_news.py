@@ -332,7 +332,7 @@ def test_x_is_watched_even_when_discord_fails_and_discord_is_tried_again_until_i
         app.news, app.news_discord = News(), Hook()
         app.cfg = types.SimpleNamespace(news_x_accounts=["const_reborn"], news_x_poll_seconds=0.5, news_x_subnets=True,
                                         news_x_subnet_handles={}, news_x_subnet_rate=6.0, startup_message=False,
-                                        dry_run=True)
+                                        dry_run=True, news_x_list=False, x_auth_token="", x_ct0="")
         retry = App._news_discord_retry
         App._news_discord_retry = lambda self, why: retry(self, why, every=0.01)
         try:

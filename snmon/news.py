@@ -728,24 +728,107 @@ class NewsMonitor:
                 self.stats["xs_fail"] = self.stats.get("xs_fail", 0) + 1
                 return
             self.stats["xs_polls"] = self.stats.get("xs_polls", 0) + 1
-            seen = self._x_ids.setdefault(handle.lower(), [])
-            fresh = [str(t.get("id")) for t in items if str(t.get("id")) not in seen]
-            # decided and recorded before any await, like the const looks: the first look at an account only records
-            new = [t for t in x_new(items, set(seen)) if x_own_post(t, handle)] if seen else []
-            seen.extend(fresh)
-            del seen[:-200]
-            if fresh:
-                self._save_state()
-            for t in new:
-                if time.time() - float(t.get("created_timestamp") or time.time()) > X_SUBNET_MAX_AGE_S:
-                    continue   # posted while the monitor was down: not news any more
-                n = next(iter(netuids)) if len(netuids) == 1 else self._x_subnet(t)
-                self._x_sub[str(t.get("id"))] = time.time()
-                await self._post_x(t, handle, feed_kind="x_subnet", netuid=n if n in netuids else None)
+            await self._subnet_x_items(handle, netuids, items)
         except asyncio.CancelledError:
             raise
         except Exception:
             log.exception("X look at subnet account @%s failed", handle)
+
+    async def _subnet_x_items(self, handle: str, netuids: set[int], items: list[dict], by_position: bool = True,
+                              source: str = "xs") -> None:
+        """One account's timeline items, from fxtwitter ("xs") or the X list ("xl"): what is new is posted, everything
+        is recorded as seen — decided and recorded before any await, so the two never post the same post twice. The first
+        look at an account only records. fxtwitter gives the account's whole timeline: new = above an item already known
+        (x_new). The list mixes all accounts and holds only each one's last few posts: new = not seen before."""
+        seen = self._x_ids.setdefault(handle.lower(), [])
+        known = set(seen)
+        fresh = list(dict.fromkeys(str(t.get("id")) for t in items if str(t.get("id")) not in known))
+        if not seen:
+            new = []
+        elif by_position:
+            new = [t for t in x_new(items, known) if x_own_post(t, handle)]
+        else:
+            new = sorted((t for t in items if str(t.get("id")) not in known and x_own_post(t, handle)),
+                         key=lambda t: int(t["id"]))
+        seen.extend(fresh)
+        del seen[:-200]
+        if fresh:
+            self._save_state()
+        for t in new:
+            if time.time() - float(t.get("created_timestamp") or time.time()) > X_SUBNET_MAX_AGE_S:
+                continue   # posted while the monitor was down: not news any more
+            n = next(iter(netuids)) if len(netuids) == 1 else self._x_subnet(t)
+            self._x_sub[str(t.get("id"))] = time.time()
+            self.stats[f"{source}_first"] = self.stats.get(f"{source}_first", 0) + 1
+            await self._post_x(t, handle, feed_kind="x_subnet", netuid=n if n in netuids else None)
+
+    async def subnet_x_list_loop(self, xlist, accounts, every: float = 2.0) -> None:
+        """Every subnet account in ONE request: the private X list (xlist.XList, read with the user's X login), about
+        every `every` s — ~0.6 s for all ~62 accounts, where fxtwitter needs a ~2.5 s request per account (21 Oct: SN54's
+        post reached the bots 12.9 s old). fxtwitter goes on next to it: whichever sees a post first sends it. If the
+        login stops working this loop ends, and fxtwitter goes on alone."""
+        from .xlist import XLoginError
+        from .xsubnets import read_profile
+        try:
+            await xlist.start()
+        except Exception as e:
+            log.error("X list not started: %s — subnet X accounts are read through fxtwitter only", e)
+            return
+        print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S')} ── X list: read as @{xlist.who} · "
+                      f"{len(xlist.members)} subnet accounts in its private list · every ~{every:g} s"))
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8),
+                                         headers={"User-Agent": "Mozilla/5.0 sn-monitor"}) as fx:
+            async def user_id(handle: str):
+                return ((await read_profile(fx, handle)) or {}).get("id")
+
+            async def sync() -> None:              # a subnet account found later joins the list
+                try:
+                    added = await xlist.sync({k: h for k, (h, _) in accounts.accounts().items()}, user_id)
+                    if added:
+                        print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S')} ── X list: {added} account(s) added "
+                                      f"({len(xlist.members)} in all)"))
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    log.warning("X list: adding new accounts failed: %s", e)
+
+            syncing: asyncio.Task | None = None
+            next_sync = 0.0
+            try:
+                while True:
+                    if time.time() >= next_sync and (syncing is None or syncing.done()):
+                        next_sync = time.time() + 3600
+                        syncing = asyncio.create_task(sync())
+                    try:
+                        items = await xlist.timeline()
+                    except asyncio.CancelledError:
+                        raise
+                    except XLoginError as e:
+                        self.stats["xl_off"] = 1
+                        log.error("X list: %s — no longer read; subnet X accounts go on through fxtwitter only", e)
+                        return
+                    except Exception as e:
+                        self.stats["xl_fail"] = self.stats.get("xl_fail", 0) + 1
+                        log.debug("X list read failed: %s", e)
+                        items = None
+                    if items is not None:
+                        self.stats["xl_polls"] = self.stats.get("xl_polls", 0) + 1
+                        watch = accounts.accounts()
+                        by: dict[str, list[dict]] = {}
+                        for t in items:              # a member's post, or the post it reposted
+                            h = ((t.get("reposted_by") or t.get("author") or {}).get("screen_name") or "").lower()
+                            if h in watch:
+                                by.setdefault(h, []).append(t)
+                        for h, its in by.items():
+                            handle, netuids = watch[h]
+                            try:
+                                await self._subnet_x_items(handle, netuids, its, by_position=False, source="xl")
+                            except Exception:
+                                log.exception("X list: posts of @%s failed", handle)
+                    await asyncio.sleep(xlist.wait(every))
+            finally:
+                if syncing is not None:
+                    syncing.cancel()
 
     def _x_subnet(self, t: dict) -> int | None:
         """Which subnet a tweet is about: 'SN81' / 'subnet 81', an @handle containing a subnet's name, or the name itself

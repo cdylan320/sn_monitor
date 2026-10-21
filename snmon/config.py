@@ -132,6 +132,10 @@ class Config:
     news_x_subnets: bool          # watch every subnet's own X account (found from its website, checked on its profile)
     news_x_subnet_rate: float     # … timeline requests per second for them, in all (one account after another)
     news_x_subnet_handles: dict   # netuid → handle added / corrected by hand ("" = watch none)
+    news_x_list: bool             # … also all of them in one request: a private X list read with the X login below
+    news_x_list_seconds: float    # … read about this often (X allows 500 reads per 15 minutes)
+    x_auth_token: str             # the X login: the auth_token and ct0 cookies of x.com (secret)
+    x_ct0: str
     news_ai_model: str            # the AI model that judges if a post is important news ('' = the provider's default)
     news_ai_timeout: float        # … seconds it gets before the keyword rules decide instead
     news_ai_race: int             # … identical requests sent at once, the first answer used (cuts the slow answers)
@@ -207,6 +211,10 @@ def load() -> Config:
         news_x_subnets=_bool("NEWS_X_SUBNETS", True),
         news_x_subnet_rate=_float("NEWS_X_SUBNET_RATE", 12.0),
         news_x_subnet_handles=_handles("NEWS_X_SUBNET_HANDLES"),
+        news_x_list=_bool("NEWS_X_LIST", True),
+        news_x_list_seconds=_float("NEWS_X_LIST_SECONDS", 2.0),
+        x_auth_token=(os.getenv("X_AUTH_TOKEN") or "").strip().strip('"'),
+        x_ct0=(os.getenv("X_CT0") or "").strip().strip('"'),
         news_ai_model=(os.getenv("NEWS_AI_MODEL") or "").strip(),   # empty: the provider's default (judge.DEFAULT_MODEL)
         news_ai_timeout=_float("NEWS_AI_TIMEOUT", 8.0),
         news_ai_race=int(_float("NEWS_AI_RACE", 2)),
