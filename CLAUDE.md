@@ -48,7 +48,7 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
 - Coldkey swap (subnet sale): all-in like a new subnet (`SWAP_MAX_STAKE_TAO=0`); a pending swap is checked against the
   owner's announcement first (a swap the chain will refuse is not traded). Exit 1%.
 - const post, rename (name change, or a new/changed GitHub link or website — `RENAME_LINKS`): up to 10 τ from the free
-  balance (everything sold first only if short). Exit 1%; const also after 25 blocks with no new high (10 once it rose).
+  balance (everything sold first only if short). Exit 1%; const also after 25 blocks with no new high (10 once it rose). A subnet bought on a const post is not bought again on one for 24 h.
 - Reversal, dump (≥70 τ SOLD in 3 blocks — sales only, buys don't cancel them — moving the price ≥1% by themselves, or ≥5% drop alone; a dump is bought like const — up to 10 τ, stakes the bot did not open sold first when short; a running trade is never sold for it —; also from the mempool; never in a pool under 5,500 τ —
   `DUMP_MIN_POOL_TAO`), news (from the monitor's feed, incl. `x_subnet`: a subnet's own X post; only news the monitor's
   judge calls important — `snmon/judge.py`, an AI via OpenRouter (or Claude directly) or keyword rules; important news is bought like const — up to 10 τ, stakes the bot did not open sold first when short; a running trade is never sold for it —; news already traded (same X post or same text, same subnet) is not traded again for 24 h; never a share of an X post over 10 min old): free balance, ≤5 τ in
