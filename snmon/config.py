@@ -205,7 +205,7 @@ def load() -> Config:
         news_x_accounts=[h.lstrip("@") for h in _list("NEWS_X_ACCOUNTS", ("const_reborn",))],
         news_x_poll_seconds=_float("NEWS_X_POLL_SECONDS", 0.5),
         news_x_subnets=_bool("NEWS_X_SUBNETS", True),
-        news_x_subnet_rate=_float("NEWS_X_SUBNET_RATE", 6.0),
+        news_x_subnet_rate=_float("NEWS_X_SUBNET_RATE", 12.0),
         news_x_subnet_handles=_handles("NEWS_X_SUBNET_HANDLES"),
         news_ai_model=(os.getenv("NEWS_AI_MODEL") or "").strip(),   # empty: the provider's default (judge.DEFAULT_MODEL)
         news_ai_timeout=_float("NEWS_AI_TIMEOUT", 8.0),
