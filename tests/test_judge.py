@@ -159,13 +159,13 @@ def test_with_an_openrouter_key_the_judge_asks_openrouter_for_a_json_answer_and_
             sess = _Session(200, {"choices": [{"message": {"content": json.dumps(FUNDING)}}],
                                   "usage": {"prompt_tokens": 950, "completion_tokens": 40, "cost": 0.000115}})
             j = NewsJudge(session=sess)
-            assert j.provider == "openrouter" and j.model == "anthropic/claude-sonnet-5.5"
-            assert j.mode == "anthropic/claude-sonnet-5.5 via OpenRouter"
+            assert j.provider == "openrouter" and j.model == "openai/gpt-6.1-sol"
+            assert j.mode == "openai/gpt-6.1-sol via OpenRouter"
             v = await j.judge("SN85 Vidaio", "We raised $5M")
             assert v == Verdict(True, "funding", "raised $5M led by a known fund", "ai")
             url, body, headers = sess.calls[0]
             assert url == OPENROUTER_URL and headers["Authorization"] == "Bearer sk-or-test"
-            assert body["model"] == "anthropic/claude-sonnet-5.5" and body["messages"][0]["role"] == "system"
+            assert body["model"] == "openai/gpt-6.1-sol" and body["reasoning"] == {"effort": "low"} and body["messages"][0]["role"] == "system"
             fmt = body["response_format"]
             assert fmt["type"] == "json_schema" and fmt["json_schema"]["strict"] is True
             assert abs(j.stats["cost"] - 0.000115) < 1e-12

@@ -6,7 +6,7 @@ the bot bought, nothing moved). So each post is judged before it is sent to the 
 progress, funding / a new investor, revenue / customers / contracts, a notable partnership, a listing, a buyback / burn.
 
 An AI reads the post (and the X post it shares): through OpenRouter when OPENROUTER_API_KEY is set in .env (default
-model anthropic/claude-sonnet-5.5: ~2-3 s, ~$0.003 a post), else Claude directly when ANTHROPIC_API_KEY is set; with
+model openai/gpt-6.1-sol, low thinking effort: ~$0.003 a post), else Claude directly when ANTHROPIC_API_KEY is set; with
 neither, or when it does not answer in NEWS_AI_TIMEOUT seconds, keyword rules decide. The verdict goes to the bots with
 the news and onto the card.
 """
@@ -22,7 +22,7 @@ from dataclasses import dataclass
 log = logging.getLogger("snmon.judge")
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = {"openrouter": "anthropic/claude-sonnet-5.5", "anthropic": "claude-opus-5-5"}
+DEFAULT_MODEL = {"openrouter": "openai/gpt-6.1-sol", "anthropic": "claude-opus-5-5"}
 
 CATEGORIES = ["launch", "progress", "funding", "revenue", "partnership", "listing", "tokenomics", "other", "none"]
 
@@ -181,6 +181,10 @@ class NewsJudge:
                                 "json_schema": {"name": "news_check", "strict": True, "schema": SCHEMA}},
             "max_tokens": 2048,
         }
+        if self.model.startswith("openai/"):
+            # a thinking model: a short yes/no needs little of it — low effort keeps the answer fast (the bots wait for it)
+            # and leaves room in max_tokens for the answer itself
+            body["reasoning"] = {"effort": "low"}
         async with self.session.post(OPENROUTER_URL, json=body,
                                      headers={"Authorization": f"Bearer {self.openrouter_key}"}) as r:
             data = await r.json(content_type=None)
