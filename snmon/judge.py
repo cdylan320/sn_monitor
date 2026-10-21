@@ -103,8 +103,9 @@ class NewsJudge:
     """One verdict per post (cached by its text); an AI when one is set up (OpenRouter, or Claude directly), the rules
     otherwise."""
 
-    def __init__(self, model: str = "", timeout: float = 8.0, client=None, session=None) -> None:
+    def __init__(self, model: str = "", timeout: float = 8.0, client=None, session=None, race: int = 1) -> None:
         self.timeout = timeout
+        self.race = max(1, race)                 # identical requests sent at once; the first good answer is used
         self.client = client                     # AsyncAnthropic (Claude directly)
         self.session = session                   # aiohttp session (OpenRouter)
         self.openrouter_key = "" if client is not None else (os.getenv("OPENROUTER_API_KEY") or "").strip()
@@ -128,7 +129,7 @@ class NewsJudge:
     @property
     def mode(self) -> str:
         if self.provider == "openrouter":
-            return f"{self.model} via OpenRouter"
+            return f"{self.model} via OpenRouter" + (f" ({self.race} requests raced)" if self.race > 1 else "")
         if self.client is not None:
             return f"Claude ({self.model})"
         return "keyword rules (no OPENROUTER_API_KEY / ANTHROPIC_API_KEY)"
@@ -142,7 +143,7 @@ class NewsJudge:
         if self.ready:
             try:
                 ask = self._ask_openrouter if self.provider == "openrouter" else self._ask
-                v = await asyncio.wait_for(ask(subnet, text, tweet_text, tweet_age_s), self.timeout)
+                v = await asyncio.wait_for(self._first(ask, subnet, text, tweet_text, tweet_age_s), self.timeout)
             except Exception as e:     # timeout, API error, refusal, bad answer: the rules decide
                 self.stats["ai_fail"] += 1
                 log.warning("news judge: Claude gave no verdict (%s: %s) — using the keyword rules", type(e).__name__, str(e)[:120])
@@ -153,6 +154,27 @@ class NewsJudge:
         if len(self._cache) > 500:
             self._cache.pop(next(iter(self._cache)))
         return v
+
+    async def _first(self, ask, *args) -> Verdict:
+        """`race` identical requests at once, the first good answer wins and the others are cancelled: one slow answer no
+        longer holds the bots up (21 Oct, 6 real posts × 2: median 2.9 → 2.4 s, slowest 5.7 → 4.1 s; SN79's 5.1 s check
+        made its stake miss a block)."""
+        if self.race <= 1:
+            return await ask(*args)
+        tasks = [asyncio.create_task(ask(*args)) for _ in range(self.race)]
+        try:
+            err: Exception | None = None
+            for done in asyncio.as_completed(tasks):
+                try:
+                    return await done
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:           # this one failed: wait for the next
+                    err = e
+            raise err or RuntimeError("no answer")
+        finally:
+            for t in tasks:
+                t.cancel()
 
     @staticmethod
     def _question(subnet: str, text: str, tweet_text: str, tweet_age_s: float | None) -> str:

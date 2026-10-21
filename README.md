@@ -254,9 +254,10 @@ and goes to the trading bots at once (kind `x_subnet`); a later share of it in D
 **News check.** Every post about a subnet is judged before it goes to the bots: is it *important* news — a product
 launch, big progress, funding or a new investor, revenue / customers / contracts, a notable partnership, a listing, a
 buyback or burn — or routine (a reply, a dev note, a reminder, a share of an old post)? An AI judges it — through
-OpenRouter when `OPENROUTER_API_KEY` is set (default `anthropic/claude-haiku-5.5`, ~1 s, about $1 a month), or Claude
+OpenRouter when `OPENROUTER_API_KEY` is set (default `openai/gpt-6.1-sol` with low thinking effort, ~2.4 s), or Claude
 directly with `ANTHROPIC_API_KEY` (`NEWS_AI_MODEL` picks another model); otherwise, or when it does not answer in
-`NEWS_AI_TIMEOUT` seconds, keyword rules do. The verdict and its reason are on the card ("News check") and travel with
+`NEWS_AI_TIMEOUT` seconds, keyword rules do. The bots wait for the verdict, so `NEWS_AI_RACE` (2) identical requests go
+at once and the first answer is used (21 Oct: median 2.9 → 2.4 s, slowest 5.7 → 4.1 s). The verdict and its reason are on the card ("News check") and travel with
 the news to the bots, which trade only important news. (21 Oct: 2 of the bots' 21 news trades made money.)
 
 **Account:** a separate alt account that's a member of the server. Its token goes in

@@ -134,6 +134,7 @@ class Config:
     news_x_subnet_handles: dict   # netuid → handle added / corrected by hand ("" = watch none)
     news_ai_model: str            # the AI model that judges if a post is important news ('' = the provider's default)
     news_ai_timeout: float        # … seconds it gets before the keyword rules decide instead
+    news_ai_race: int             # … identical requests sent at once, the first answer used (cuts the slow answers)
     news_feed_port: int          # 0 = off; else the trading bots read the news from this port
     news_feed_token: str
 
@@ -207,6 +208,7 @@ def load() -> Config:
         news_x_subnet_handles=_handles("NEWS_X_SUBNET_HANDLES"),
         news_ai_model=(os.getenv("NEWS_AI_MODEL") or "").strip(),   # empty: the provider's default (judge.DEFAULT_MODEL)
         news_ai_timeout=_float("NEWS_AI_TIMEOUT", 8.0),
+        news_ai_race=int(_float("NEWS_AI_RACE", 2)),
         news_feed_port=_int("NEWS_FEED_PORT", 0),
         news_feed_token=(os.getenv("NEWS_FEED_TOKEN") or "").strip(),
     )

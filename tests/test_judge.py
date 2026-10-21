@@ -186,6 +186,40 @@ def test_the_typical_news_always_counts_and_the_model_judges_anything_else_too()
     v = NewsJudge._verdict(json.dumps({"important": True, "category": "other", "reason": "the founder joins OpenAI"}))
     assert v.important and v.category == "other"                  # important news outside the examples is traded
 
+
+def test_raced_requests_the_first_good_answer_is_used_and_the_slow_one_is_dropped():
+    # 21 Oct: SN79's check took 5.1 s and its stake missed a block; 2 requests at once cut the slow answers
+    async def go():
+        os.environ["OPENROUTER_API_KEY"] = "sk-or-test"
+        try:
+            calls = []
+
+            class Slow(_Session):
+                def post(self, url, json=None, headers=None):
+                    inner, n = super().post(url, json, headers), len(calls)
+                    calls.append(n)
+
+                    class Late:
+                        async def __aenter__(self):
+                            if n == 0:
+                                await asyncio.sleep(2)          # the first request is the slow one
+                            return await inner.__aenter__()
+
+                        async def __aexit__(self, *a):
+                            return False
+                    return Late()
+            j = NewsJudge(session=Slow(200, {"choices": [{"message": {"content": json.dumps(FUNDING)}}], "usage": {}}),
+                          race=2)
+            assert "2 requests raced" in j.mode
+            t = time.perf_counter()
+            v = await j.judge("SN85 Vidaio", "We raised $5M")
+            assert v.by == "ai" and v.category == "funding" and time.perf_counter() - t < 1.0 and len(calls) == 2
+            bad = NewsJudge(session=_Session(402, {"error": {"message": "no credits"}}), race=2)
+            assert (await bad.judge("SN85", "Introducing our app, live now")).by == "rules"   # both fail: the rules
+        finally:
+            os.environ.pop("OPENROUTER_API_KEY", None)
+    asyncio.run(go())
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):
