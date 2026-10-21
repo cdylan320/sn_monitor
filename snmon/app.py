@@ -33,6 +33,7 @@ from .rpc import Rpc
 from .signals import Signals, parse_trigger
 from .trend import TrendBoard, TrendMonitor, parse_timeframes
 from .xsubnets import SubnetAccounts
+from .judge import NewsJudge
 
 log = logging.getLogger("snmon")
 
@@ -85,6 +86,7 @@ class App:
                 price_now=lambda n: self.det.history.get(self.det.last_block, {}).get(n),
                 change=self.det.change, guild_hint=cfg.news_guild,
                 min_team_chars=cfg.news_min_team_chars, dry_run=cfg.dry_run)
+            self.news.judge = NewsJudge(cfg.news_ai_model, cfg.news_ai_timeout)
         self.trend: TrendMonitor | None = None
         if cfg.trend_webhook_url:
             self.bars = Bars(ROOT / "data" / "bars.db")
@@ -486,7 +488,8 @@ class App:
         print(fmt.dim(f"{now_str()} ── news monitor live in {self.news.guild_name} as "
                       f"{(self.news.client.user or {}).get('username')} · {n} subnet channels "
                       f"({teams} with a team detected) · {len(self.news.staff_roles)} staff roles · X: "
-                      + ", ".join("@" + h for h in self.cfg.news_x_accounts) + subnet_x))
+                      + ", ".join("@" + h for h in self.cfg.news_x_accounts) + subnet_x
+                      + f" · news judged by {self.news.judge.mode}"))
         if self.cfg.startup_message and not self.cfg.dry_run and not self._recent_start("last_start_news"):
             await self.news_discord.send({"embeds": [{
                 "title": "🟢 News monitor is live",

@@ -11,6 +11,8 @@ Discord card goes out — as one Server-Sent Event:
 kind: announcement (@everyone) · team (a team / staff update) · x_team (an X post shared by the team) ·
       x_other (an X post shared by anyone else) · x_account (a post by a watched X account, e.g. const)
 price: the subnet's price (rao per alpha) when the news was seen.
+important / category / why / judge: the news check (judge.py) — is it important news (a launch, funding, revenue, a
+      partnership …)? judge: "ai" (Claude) or "rules" (keywords). Absent when the monitor has no judge.
 
 Only news detected after a bot connected is sent: a bot must never trade old news, so after a restart or an outage it
 starts from now. A comment line every 15 s keeps the connection open and lets the bot notice a dead one.

@@ -137,6 +137,7 @@ class NewsMonitor:
         self.posted = 0
         self.ready = False
         self.news_feed = None       # NewsFeed: news events for the trading bots (set by the app when NEWS_FEED_PORT is on)
+        self.judge = None           # NewsJudge: is a post important news? (set by the app)
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -483,24 +484,43 @@ class NewsMonitor:
         return emb
 
     def _publish(self, netuid: int | None, kind: str, who: str | None, source: str, text: str, url: str,
-                 posted: float) -> None:
-        """Hand a news event to the trading bots at once — before the card (and any tweet fetch) goes out."""
+                 posted: float, verdict=None) -> None:
+        """Hand a news event to the trading bots at once — before the card goes out — with the judge's verdict."""
         if self.news_feed is None or netuid is None:
             return
         price = self.price_now(netuid) or 0
-        n = self.news_feed.publish({"netuid": netuid, "kind": kind, "who": who or "", "source": source,
-                               "text": (text or "")[:280], "url": url or "", "posted": posted, "price": int(price)})
+        ev = {"netuid": netuid, "kind": kind, "who": who or "", "source": source,
+              "text": (text or "")[:280], "url": url or "", "posted": posted, "price": int(price)}
+        if verdict is not None:
+            ev.update(verdict.event())
+        n = self.news_feed.publish(ev)
         if n:
             print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]}    ↳ news sent to {n} trading bot(s)"))
 
+    async def _verdict(self, netuid: int | None, text: str, tweet_text: str = "", tweet_age_s: float | None = None):
+        """The judge's verdict on a post about a subnet (None: no judge, or no subnet)."""
+        if self.judge is None or netuid is None:
+            return None
+        info = self.meta.info(netuid)
+        t0 = time.time()
+        v = await self.judge.judge(info.label if info else f"SN{netuid}", text, tweet_text, tweet_age_s)
+        print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]}    ↳ {'important' if v.important else 'not important'}"
+                      f" ({v.category}, {v.by}, {time.time() - t0:.1f}s): {v.reason}"))
+        return v
+
     async def _post(self, m: dict, ch: Channel, kind: str, who: str | None) -> None:
         feed_kind = {ANNOUNCE: "announcement", TEAM: "team"}.get(kind) or ("x_team" if who else "x_other")
-        self._publish(ch.netuid, feed_kind, who, f"discord #{ch.name}", self._clean(m),
-                      f"https://discord.com/channels/{self.guild_id}/{ch.id}/{m['id']}", _ts(m))
-        payload, p0 = self.build(m, ch, kind, who)
         x = X_RE.search(m.get("content") or "")
+        tw = await self.tweet(x.group(0)) if x else None       # the judge reads the X post it shares too
+        text = self._clean(m)
+        verdict = await self._verdict(ch.netuid, text, tw["description"] if tw else "",
+                                      time.time() - x_posted(x.group(2)) if x else None)
+        self._publish(ch.netuid, feed_kind, who, f"discord #{ch.name}", text,
+                      f"https://discord.com/channels/{self.guild_id}/{ch.id}/{m['id']}", _ts(m), verdict)
+        payload, p0 = self.build(m, ch, kind, who)
+        if verdict is not None:
+            payload["embeds"][0].setdefault("fields", []).append(verdict_field(verdict))
         if x:
-            tw = await self.tweet(x.group(0))
             lines = payload["content"].split("\n")
             lines = [ln for ln in lines if not X_RE.fullmatch(ln.strip())]  # drop the bare link line
             if tw:
@@ -754,9 +774,10 @@ class NewsMonitor:
             desc += (f"\n\n**In reply to {pa.get('name', '')} (@{pa.get('screen_name', '')}):**\n> "
                      + parent["text"].replace("\n", "\n> ")[:600])
         n = netuid if feed_kind == "x_subnet" else self._x_subnet(t)
+        verdict = await self._verdict(n, text + ("\n\n" + quote["text"] if quote.get("text") else ""))
         # a repost is dated by the original tweet — for the bots it is news now
         self._publish(n, feed_kind, me.get("screen_name") or handle, f"x @{handle}", text, t.get("url") or "",
-                      time.time() if rb or not t.get("created_timestamp") else float(t["created_timestamp"]))
+                      time.time() if rb or not t.get("created_timestamp") else float(t["created_timestamp"]), verdict)
         info = self.meta.info(n) if n is not None else None
         p0 = self.price_now(n) if n is not None else None
         sub = f" · **SN{n} {info.name}**" if info else ""
@@ -776,7 +797,7 @@ class NewsMonitor:
             "url": t.get("url"),
             "description": desc or "*(media)*",
             "color": COLOR[XPOST],
-            "fields": fields,
+            "fields": fields + ([verdict_field(verdict)] if verdict is not None else []),
             "footer": {"text": f"X · ♥ {t.get('likes', 0)} · ⟲ {t.get('reposts', 0)} · 💬 {t.get('replies', 0)}"},
         }
         photos = (t.get("media") or {}).get("photos") or []
@@ -857,6 +878,18 @@ def x_by(t: dict, handle: str) -> bool:
     h = handle.lower()
     return ((t.get("author") or {}).get("screen_name", "").lower() == h
             or (t.get("reposted_by") or {}).get("screen_name", "").lower() == h)
+
+
+def x_posted(status_id: str | int) -> float:
+    """When an X post was made (epoch seconds), read from its id — X ids carry their creation time."""
+    return ((int(status_id) >> 22) + 1288834974657) / 1000
+
+
+def verdict_field(v) -> dict:
+    """The judge's verdict as a card field."""
+    head = f"🔥 **Important** · {v.category}" if v.important else "▫️ Not important"
+    return {"name": f"News check ({'AI' if v.by == 'ai' else 'rules'})", "value": f"{head} — {v.reason}"[:1000],
+            "inline": False}
 
 
 def x_own_post(t: dict, handle: str) -> bool:

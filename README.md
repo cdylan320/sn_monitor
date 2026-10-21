@@ -250,6 +250,13 @@ X profile points back to the subnet (its website, "SN85" in the bio, or its name
 `NEWS_X_SUBNET_RATE` (3) requests a second in all — each about every 20 s. A subnet's own post or quote becomes a card
 and goes to the trading bots at once (kind `x_subnet`); a later share of it in Discord is not reported again.
 
+**News check.** Every post about a subnet is judged before it goes to the bots: is it *important* news — a product
+launch, big progress, funding or a new investor, revenue / customers / contracts, a notable partnership, a listing, a
+buyback or burn — or routine (a reply, a dev note, a reminder, a share of an old post)? Claude judges it when
+`ANTHROPIC_API_KEY` is set (`NEWS_AI_MODEL`, default `claude-opus-5-5`); otherwise, or when it does not answer in
+`NEWS_AI_TIMEOUT` seconds, keyword rules do. The verdict and its reason are on the card ("News check") and travel with
+the news to the bots, which trade only important news. (21 Oct: 2 of the bots' 21 news trades made money.)
+
 **Account:** a separate alt account that's a member of the server. Its token goes in
 `NEWS_DISCORD_TOKEN`. Automating a user account breaks Discord's terms, so the alt is what's at
 risk, not your main account. To check the login and preview what would be posted:

@@ -132,6 +132,8 @@ class Config:
     news_x_subnets: bool          # watch every subnet's own X account (found from its website, checked on its profile)
     news_x_subnet_rate: float     # … timeline requests per second for them, in all (one account after another)
     news_x_subnet_handles: dict   # netuid → handle added / corrected by hand ("" = watch none)
+    news_ai_model: str            # the Claude model that judges if a post is important news (ANTHROPIC_API_KEY)
+    news_ai_timeout: float        # … seconds it gets before the keyword rules decide instead
     news_feed_port: int          # 0 = off; else the trading bots read the news from this port
     news_feed_token: str
 
@@ -203,6 +205,8 @@ def load() -> Config:
         news_x_subnets=_bool("NEWS_X_SUBNETS", True),
         news_x_subnet_rate=_float("NEWS_X_SUBNET_RATE", 3.0),
         news_x_subnet_handles=_handles("NEWS_X_SUBNET_HANDLES"),
+        news_ai_model=(os.getenv("NEWS_AI_MODEL") or "").strip() or "claude-opus-5-5",
+        news_ai_timeout=_float("NEWS_AI_TIMEOUT", 8.0),
         news_feed_port=_int("NEWS_FEED_PORT", 0),
         news_feed_token=(os.getenv("NEWS_FEED_TOKEN") or "").strip(),
     )
