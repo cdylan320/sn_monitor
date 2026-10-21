@@ -82,6 +82,7 @@ GREETING = re.compile(r"^\s*(hi|hey|hello|gm|yo)\b(?!.*\b(all|everyone|folks|guy
 ANNOUNCE, XPOST, TEAM = "announcement", "x_post", "team"
 X_TIMELINE = "https://api.fxtwitter.com/2/profile/{}/statuses"
 X_SUBNET_MAX_AGE_S = 600   # a subnet's post older than this when first seen (posted while the monitor was down) is not news
+X_SUBNET_RETRIES = 2       # a failed look at a subnet's account is tried again at once, this many times
 LABEL = {ANNOUNCE: "📢 Announcement", XPOST: "🐦 X post", TEAM: "📰 Team update"}
 COLOR = {ANNOUNCE: 0xF59E0B, XPOST: 0x1D9BF0, TEAM: 0x8B5CF6}
 
@@ -654,11 +655,11 @@ class NewsMonitor:
 
     # ── every subnet's own X account ─────────────────────────────────────
 
-    async def subnet_x_loop(self, accounts, rate: float = 3.0) -> None:
+    async def subnet_x_loop(self, accounts, rate: float = 6.0) -> None:
         """Watch every subnet's own X account (found by xsubnets.SubnetAccounts): its post is news the moment it is
         seen — the Discord share comes minutes later (20 Oct: @vidaio_ posted at 15:03, it was shared in #85 at 15:04
         while bots were already buying SN85). One account after another, `rate` timeline requests a second in all
-        (3/s: ~65 accounts, each every ~22 s). Its own posts and quotes count; replies (its thread's next parts too)
+        (6/s: ~65 accounts, each every ~11 s). Its own posts and quotes count; replies (its thread's next parts too)
         and reposts are chatter. The handles are looked up again every hour for the subnets that are due."""
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8),
                                          headers={"User-Agent": "Mozilla/5.0 sn-monitor"}) as session:
@@ -705,7 +706,17 @@ class NewsMonitor:
 
     async def _subnet_x_look(self, session, handle: str, netuids: set[int]) -> None:
         try:
-            items = await self._x_fetch(session, X_TIMELINE.format(handle) + "?with_replies=true")
+            # fxtwitter fails ~40% of requests (a 404, at 1/s as at 8/s — measured 21 Oct) and a retry at once mostly
+            # works; without it the post waited for the account's next turn (SN68 NOVA, 21 Oct: seen 22 s after it was posted)
+            items = None
+            for attempt in range(1 + X_SUBNET_RETRIES):
+                if attempt:
+                    if time.time() < self._x_pause_until:
+                        break
+                    self.stats["xs_retry"] = self.stats.get("xs_retry", 0) + 1
+                items = await self._x_fetch(session, X_TIMELINE.format(handle) + "?with_replies=true")
+                if items is not None:
+                    break
             if items is None:
                 self.stats["xs_fail"] = self.stats.get("xs_fail", 0) + 1
                 return

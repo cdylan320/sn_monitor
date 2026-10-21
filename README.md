@@ -247,7 +247,8 @@ the accounts in `NEWS_X_ACCOUNTS` (const), and **every subnet's own X account** 
 automatically — the X account the subnet's website links most (else its GitHub README) — and only watched when its
 X profile points back to the subnet (its website, "SN85" in the bio, or its name). 61 of 128 subnets had one on 20 Oct;
 `NEWS_X_SUBNET_HANDLES=72:NATIXNetwork,21:-` adds or corrects them by hand. They are looked at one after another,
-`NEWS_X_SUBNET_RATE` (3) requests a second in all — each about every 20 s. A subnet's own post or quote becomes a card
+`NEWS_X_SUBNET_RATE` (6) requests a second in all — each about every 11 s; a failed look (the free API fails ~40% of
+requests) is tried again at once, up to 2 times. A subnet's own post or quote becomes a card
 and goes to the trading bots at once (kind `x_subnet`); a later share of it in Discord is not reported again.
 
 **News check.** Every post about a subnet is judged before it goes to the bots: is it *important* news — a product

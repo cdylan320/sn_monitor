@@ -695,7 +695,9 @@ class App:
                           + (f" · trends {self.trend.alerts}" if self.trend else "")
                           + (f" · news {self.news.posted} (gateway msgs {self.news.stats.get('MESSAGE_CREATE', 0)}, "
                              f"passive {self.news.stats.get('PASSIVE_UPDATE_V1', 0) + self.news.stats.get('PASSIVE_UPDATE_V2', 0)}"
-                             f", sweep {self.news.stats.get('sweep', 0)}, X checks {self.news.stats.get('x_polls', 0)} ok / {self.news.stats.get('x_fail', 0)} failed)"
+                             f", sweep {self.news.stats.get('sweep', 0)}, X checks {self.news.stats.get('x_polls', 0)} ok / {self.news.stats.get('x_fail', 0)} failed"
+                             f", subnet X checks {self.news.stats.get('xs_polls', 0)} ok / {self.news.stats.get('xs_fail', 0)} failed"
+                             f" ({self.news.stats.get('xs_retry', 0)} retries))"
                              if self.news else "")))
 
     async def _startup_message(self) -> None:

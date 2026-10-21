@@ -226,6 +226,44 @@ def test_own_post_means_written_by_the_account_not_a_reply_or_repost():
     assert not x_own_post(tweet(4, author="p", reposted_by={"screen_name": "vidaio_"}), "vidaio_")
 
 
+
+class _FlakyX(_X):
+    """fxtwitter as it is: the first `fails` requests answer 404."""
+    def __init__(self, items, fails):
+        super().__init__(items)
+        self.fails, self.asked = fails, 0
+
+    def get(self, url, **kw):
+        self.asked += 1
+        r = super().get(url, **kw)
+        if self.asked <= self.fails:
+            r.status = 404
+        return r
+
+
+def test_a_failed_look_at_a_subnet_account_is_tried_again_at_once():
+    # 21 Oct: fxtwitter failed ~40% of requests; @metanova_labs' post reached the bots 25 s after it was posted
+    async def go():
+        m = nm()
+        posted = []
+
+        async def post_x(t, h, parent=None, feed_kind="x_account", netuid=None):
+            posted.append(t["id"])
+        m._post_x = post_x
+        await m._subnet_x_look(_X([tweet(1, age=3000)]), "vidaio_", {85})
+        x = _FlakyX([tweet(2), tweet(1, age=3000)], fails=2)
+        await m._subnet_x_look(x, "vidaio_", {85})
+        assert posted == ["2"] and x.asked == 3 and m.stats["xs_retry"] == 2      # 2 failures, the 3rd try works
+        dead = _FlakyX([tweet(3)], fails=99)
+        await m._subnet_x_look(dead, "vidaio_", {85})
+        assert dead.asked == 3 and m.stats["xs_fail"] == 1                          # gives up after 2 retries
+        m._x_pause_until = time.time() + 30                                         # a 429: no retry while paused
+        paused = _FlakyX([tweet(3)], fails=99)
+        await m._subnet_x_look(paused, "vidaio_", {85})
+        assert paused.asked == 1
+    asyncio.run(go())
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):
