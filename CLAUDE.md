@@ -35,7 +35,7 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
 - New subnet (start call): sells everything, stakes all (`LAUNCH_MAX_STAKE_TAO=0`), sent in the block after the start call
   is seen (same block when the start call is visible in the mempool). Exit: no floor; not acted on in the start call's
   block and the next 5 (`LAUNCH_GRACE_BLOCKS`; SN59: ×3, then −21%, −17%, −17%, +3%, +8%); then a trail from the high of
-  8% from +6, 5% from +10, 2% from +15 (`LAUNCH_TRAIL_STEPS`).
+  8% from +6, 5% from +10, 2% from +12 (`LAUNCH_TRAIL_STEPS`).
 - Coldkey swap (subnet sale): all-in like a new subnet (`SWAP_MAX_STAKE_TAO=0`); a pending swap is checked against the
   owner's announcement first (a swap the chain will refuse is not traded). Exit 1%.
 - const post, rename (name change, or a new/changed GitHub link or website — `RENAME_LINKS`): up to 10 τ from the free
