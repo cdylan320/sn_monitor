@@ -220,6 +220,66 @@ def test_raced_requests_the_first_good_answer_is_used_and_the_slow_one_is_droppe
             os.environ.pop("OPENROUTER_API_KEY", None)
     asyncio.run(go())
 
+
+class _Models:
+    """A pretend OpenRouter that answers per model: {model: (seconds, answer dict, or None for an error)}."""
+    def __init__(self, plan):
+        self.plan, self.calls = plan, []
+
+    def post(self, url, json=None, headers=None):
+        self.calls.append((json["model"], json))
+        delay, answer = self.plan[json["model"]]
+
+        class R:
+            status = 200 if answer is not None else 500
+
+            async def __aenter__(self):
+                await asyncio.sleep(delay)
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def json(self, content_type=None):
+                if answer is None:
+                    return {"error": {"message": "down"}}
+                return {"choices": [{"message": {"content": _dumps(answer)}}], "usage": {"cost": 0.0001}}
+        return R()
+
+
+_dumps = json.dumps
+NOT = {"important": False, "category": "none", "reason": "a reply to a user"}
+
+
+def test_the_fast_models_important_goes_out_at_once_its_not_important_waits_for_the_main_model():
+    # 21 Oct: gpt-6-luna answers in 1.3 s (gpt-6.1-sol 2.5 s, up to 5 s) but missed 2 of 5 important posts
+    async def go():
+        os.environ["OPENROUTER_API_KEY"] = "sk-or-test"
+        try:
+            def judge(plan):
+                return NewsJudge(session=_Models(plan), race=1, fast_model="openai/gpt-6-luna")
+            j = judge({"openai/gpt-6.1-sol": (0.6, NOT), "openai/gpt-6-luna": (0.05, FUNDING)})
+            assert "gpt-6-luna" in j.mode
+            t = time.perf_counter()
+            v = await j.judge("SN85", "We raised $5M")
+            assert v.important and v.model == "openai/gpt-6-luna" and time.perf_counter() - t < 0.4    # at once
+            await asyncio.sleep(0.8)                                       # the main model's answer is only compared
+            assert j.stats["fast"] == 1 and j.stats["fast_overruled"] == 1
+            fast_body = next(b for m, b in j.session.calls if m == "openai/gpt-6-luna")
+            assert fast_body["reasoning"] == {"enabled": False}
+            k = judge({"openai/gpt-6.1-sol": (0.3, FUNDING), "openai/gpt-6-luna": (0.05, NOT)})
+            v = await k.judge("SN22", "Embedding tasks are part of SN22 main now")
+            assert v.important and v.model == "openai/gpt-6.1-sol"         # the fast model missed it, the main one did not
+            down = judge({"openai/gpt-6.1-sol": (0.05, None), "openai/gpt-6-luna": (0.2, NOT)})
+            v = await down.judge("SN9", "community call tomorrow")
+            assert v.by == "ai" and v.model == "openai/gpt-6-luna" and not v.important   # main failed: the fast answer
+            off = NewsJudge(session=_Models({"openai/gpt-6.1-sol": (0.0, FUNDING)}))
+            await off.judge("SN85", "We raised $5M")
+            assert [m for m, _ in off.session.calls] == ["openai/gpt-6.1-sol"]          # no fast model unless set
+        finally:
+            os.environ.pop("OPENROUTER_API_KEY", None)
+    asyncio.run(go())
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

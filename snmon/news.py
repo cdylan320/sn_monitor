@@ -514,7 +514,7 @@ class NewsMonitor:
         v = await self.judge.judge(info.label if info else f"SN{netuid}", text, tweet_text, tweet_age_s)
         spent = self.judge.stats.get("cost") or 0
         print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]}    ↳ {'important' if v.important else 'not important'}"
-                      f" ({v.category}, {v.by}, {time.time() - t0:.1f}s): {v.reason}"
+                      f" ({v.category}, {v.by}{' ' + v.model.split('/')[-1] if v.model else ''}, {time.time() - t0:.1f}s): {v.reason}"
                       + (f" · AI spend since start ${spent:.4f}" if spent else "")))
         return v
 

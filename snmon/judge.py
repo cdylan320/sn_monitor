@@ -17,12 +17,17 @@ import json
 import logging
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 log = logging.getLogger("snmon.judge")
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = {"openrouter": "openai/gpt-6.1-sol", "anthropic": "claude-opus-5-5"}
+# asked next to the main model: its "important" goes to the bots at once, its "not important" waits for the main model.
+# 21 Oct, 21 real posts × 2: gpt-6-luna without thinking answers in 1.3 s (gpt-6.1-sol 2.5 s, up to 5 s) and agrees on 39
+# of 42, but it missed 2 of the 5 important posts — alone it would lose trades. gpt-oss-120b (0.3 s) and Mercury (0.6 s)
+# call too much important.
+FAST_MODEL = "openai/gpt-6-luna"
 
 CATEGORIES = ["launch", "progress", "funding", "revenue", "partnership", "listing", "tokenomics", "other", "none"]
 
@@ -81,9 +86,17 @@ class Verdict:
     category: str
     reason: str
     by: str              # "ai" | "rules"
+    model: str = field(default="", compare=False)   # the AI model whose answer this is
 
     def event(self) -> dict:
         return {"important": self.important, "category": self.category, "why": self.reason, "judge": self.by}
+
+
+def _answer(task: asyncio.Task) -> Verdict | None:
+    """A finished request's verdict; None if it failed, was cancelled or is still running."""
+    if not task.done() or task.cancelled() or task.exception() is not None:
+        return None
+    return task.result()
 
 
 def rules(text: str, tweet_age_s: float | None = None) -> Verdict:
@@ -103,7 +116,8 @@ class NewsJudge:
     """One verdict per post (cached by its text); an AI when one is set up (OpenRouter, or Claude directly), the rules
     otherwise."""
 
-    def __init__(self, model: str = "", timeout: float = 8.0, client=None, session=None, race: int = 1) -> None:
+    def __init__(self, model: str = "", timeout: float = 8.0, client=None, session=None, race: int = 1,
+                 fast_model: str = "") -> None:
         self.timeout = timeout
         self.race = max(1, race)                 # identical requests sent at once; the first good answer is used
         self.client = client                     # AsyncAnthropic (Claude directly)
@@ -112,6 +126,7 @@ class NewsJudge:
         self.provider = ("openrouter" if self.openrouter_key or session is not None
                          else "anthropic" if client is not None or os.getenv("ANTHROPIC_API_KEY") else "")
         self.model = model or DEFAULT_MODEL.get(self.provider, "")
+        self.fast_model = fast_model if self.provider == "openrouter" and fast_model != self.model else ""
         if self.client is None and self.provider == "anthropic":
             try:
                 import anthropic
@@ -120,7 +135,7 @@ class NewsJudge:
                 log.warning("ANTHROPIC_API_KEY is set but the anthropic package is not installed "
                             "(.venv/bin/pip install -r requirements.txt) — judging news by keyword rules")
         self._cache: dict[str, Verdict] = {}
-        self.stats = {"ai": 0, "rules": 0, "ai_fail": 0, "cost": 0.0}
+        self.stats = {"ai": 0, "rules": 0, "ai_fail": 0, "cost": 0.0, "fast": 0, "fast_agreed": 0, "fast_overruled": 0}
 
     @property
     def ready(self) -> bool:
@@ -129,7 +144,8 @@ class NewsJudge:
     @property
     def mode(self) -> str:
         if self.provider == "openrouter":
-            return f"{self.model} via OpenRouter" + (f" ({self.race} requests raced)" if self.race > 1 else "")
+            return (f"{self.model} via OpenRouter" + (f" ({self.race} requests raced)" if self.race > 1 else "")
+                    + (f" + {self.fast_model} (its 'important' goes out at once)" if self.fast_model else ""))
         if self.client is not None:
             return f"Claude ({self.model})"
         return "keyword rules (no OPENROUTER_API_KEY / ANTHROPIC_API_KEY)"
@@ -142,8 +158,7 @@ class NewsJudge:
         v = None
         if self.ready:
             try:
-                ask = self._ask_openrouter if self.provider == "openrouter" else self._ask
-                v = await asyncio.wait_for(self._first(ask, subnet, text, tweet_text, tweet_age_s), self.timeout)
+                v = await asyncio.wait_for(self._decide(subnet, text, tweet_text, tweet_age_s), self.timeout)
             except Exception as e:     # timeout, API error, refusal, bad answer: the rules decide
                 self.stats["ai_fail"] += 1
                 log.warning("news judge: Claude gave no verdict (%s: %s) — using the keyword rules", type(e).__name__, str(e)[:120])
@@ -154,6 +169,53 @@ class NewsJudge:
         if len(self._cache) > 500:
             self._cache.pop(next(iter(self._cache)))
         return v
+
+    async def _decide(self, *args) -> Verdict:
+        """The main model decides — unless the fast model calls the news important first: that goes to the bots at once,
+        and the main model's later answer is only compared (logged). The fast model's 'not important' waits for the main
+        model, which catches what the fast one misses. If the main model fails, the fast model's answer is used."""
+        ask = self._ask_openrouter if self.provider == "openrouter" else self._ask
+        if not self.fast_model:
+            return await self._first(ask, *args)
+        main = asyncio.create_task(asyncio.wait_for(self._first(ask, *args), self.timeout))
+        fast = asyncio.create_task(self._ask_openrouter(*args, model=self.fast_model))
+        kept = False
+        try:
+            await asyncio.wait({main, fast}, return_when=asyncio.FIRST_COMPLETED)
+            if not main.done():
+                quick = _answer(fast)
+                if quick is not None and quick.important:
+                    self.stats["fast"] += 1
+                    main.add_done_callback(lambda t: self._second_opinion(quick, t))
+                    kept = True                  # the main model's answer still comes, for the log
+                    return quick
+            try:
+                return await main
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                if not fast.done():
+                    await asyncio.wait({fast})
+                quick = _answer(fast)
+                if quick is None:
+                    raise
+                return quick
+        finally:
+            if not fast.done():
+                fast.cancel()
+            if not kept and not main.done():
+                main.cancel()
+
+    def _second_opinion(self, quick: Verdict, task: asyncio.Task) -> None:
+        main = _answer(task)
+        if main is None:
+            return
+        if main.important:
+            self.stats["fast_agreed"] += 1
+        else:
+            self.stats["fast_overruled"] += 1
+            log.warning("news check: %s called it important (%s), %s says not (%s) — the bots got the fast answer",
+                        self.fast_model, quick.reason, self.model, main.reason)
 
     async def _first(self, ask, *args) -> Verdict:
         """`race` identical requests at once, the first good answer wins and the others are cancelled: one slow answer no
@@ -190,20 +252,25 @@ class NewsJudge:
         important = bool(data["important"]) and data["category"] != "none"
         return Verdict(important, data["category"], str(data["reason"])[:160], by)
 
-    async def _ask_openrouter(self, subnet: str, text: str, tweet_text: str, tweet_age_s: float | None) -> Verdict:
+    async def _ask_openrouter(self, subnet: str, text: str, tweet_text: str, tweet_age_s: float | None,
+                              model: str = "") -> Verdict:
         """OpenRouter's chat completions API, with a JSON-schema answer; what it cost is added to stats["cost"]."""
         if self.session is None:
             import aiohttp
             self.session = aiohttp.ClientSession()
+        model = model or self.model
         body = {
-            "model": self.model,
+            "model": model,
             "messages": [{"role": "system", "content": SYSTEM},
                          {"role": "user", "content": self._question(subnet, text, tweet_text, tweet_age_s)}],
             "response_format": {"type": "json_schema",
                                 "json_schema": {"name": "news_check", "strict": True, "schema": SCHEMA}},
             "max_tokens": 2048,
         }
-        if self.model.startswith("openai/"):
+        if model == self.fast_model:
+            body["reasoning"] = {"enabled": False}      # the fast model answers without thinking (with it: 3 s, no better)
+            body["provider"] = {"sort": "latency"}
+        elif model.startswith("openai/"):
             # a thinking model: a short yes/no needs little of it — low effort keeps the answer fast (the bots wait for it)
             # and leaves room in max_tokens for the answer itself
             body["reasoning"] = {"effort": "low"}
@@ -213,7 +280,9 @@ class NewsJudge:
             if r.status != 200 or "error" in data:
                 raise RuntimeError(f"OpenRouter {r.status}: {str(data.get('error'))[:120]}")
         self.stats["cost"] += float((data.get("usage") or {}).get("cost") or 0)
-        return self._verdict(data["choices"][0]["message"]["content"])
+        v = self._verdict(data["choices"][0]["message"]["content"])
+        v.model = model
+        return v
 
     async def _ask(self, subnet: str, text: str, tweet_text: str, tweet_age_s: float | None) -> Verdict:
         kwargs = {}
