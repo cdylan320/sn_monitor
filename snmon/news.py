@@ -799,6 +799,7 @@ class NewsMonitor:
                     if time.time() >= next_sync and (syncing is None or syncing.done()):
                         next_sync = time.time() + 3600
                         syncing = asyncio.create_task(sync())
+                    began = time.monotonic()         # the pace counts from the start of a read (a read takes ~0.7 s)
                     try:
                         items = await xlist.timeline()
                     except asyncio.CancelledError:
@@ -825,7 +826,7 @@ class NewsMonitor:
                                 await self._subnet_x_items(handle, netuids, its, by_position=False, source="xl")
                             except Exception:
                                 log.exception("X list: posts of @%s failed", handle)
-                    await asyncio.sleep(xlist.wait(every))
+                    await asyncio.sleep(max(0.0, xlist.wait(every) - (time.monotonic() - began)))
             finally:
                 if syncing is not None:
                     syncing.cancel()
