@@ -478,8 +478,8 @@ class App:
             return
         # X needs no Discord account: const and the subnets' own accounts are watched even when Discord fails (21 Oct:
         # the news account was removed from the Bittensor server, and after a restart nothing at all was watched)
+        # X first: the Discord start (channels, catch-up) takes ~1.5 min, and X was blind meanwhile after every restart
         self.news.restore_x()
-        why = await self._news_discord()
         if self.cfg.news_x_accounts:
             asyncio.create_task(self.news.x_loop(self.cfg.news_x_accounts, self.cfg.news_x_poll_seconds))
         subnet_x = ""
@@ -487,6 +487,7 @@ class App:
             accounts = SubnetAccounts(self.cfg.news_x_subnet_handles, skip=set(self.cfg.news_x_accounts))
             asyncio.create_task(self.news.subnet_x_loop(accounts, self.cfg.news_x_subnet_rate))
             subnet_x = f" + every subnet's own account ({len(accounts.by_netuid())} known, more being looked up)"
+        why = await self._news_discord()
         x = " · X: " + ", ".join("@" + h for h in self.cfg.news_x_accounts) + subnet_x
         if why:
             print(fmt.dim(f"{now_str()} ── news monitor live on X only{x} · news judged by {self.news.judge.mode}"))

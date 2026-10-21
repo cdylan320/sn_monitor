@@ -312,14 +312,17 @@ def test_x_is_watched_even_when_discord_fails_and_discord_is_tried_again_until_i
 
             async def start(self):
                 tries.append(1)
+                started.append("discord")
                 if len(tries) < 3:
                     raise RuntimeError("the news account is not in a Bittensor server")
 
-            async def x_loop(self, handles, every):
+            def x_loop(self, handles, every):                # recorded when the app starts it, not when it first runs
                 started.append(("x", tuple(handles)))
+                return asyncio.sleep(0)
 
-            async def subnet_x_loop(self, accounts, rate):
+            def subnet_x_loop(self, accounts, rate):
                 started.append(("subnet_x", rate))
+                return asyncio.sleep(0)
 
         class Hook:
             async def start(self):
@@ -340,6 +343,7 @@ def test_x_is_watched_even_when_discord_fails_and_discord_is_tried_again_until_i
             App._news_discord_retry = retry
         assert started[0] == "restore_x" and ("x", ("const_reborn",)) in started and ("subnet_x", 6.0) in started
         assert len(tries) == 3                                        # failed, failed, then Discord runs: no more tries
+        assert started.index(("subnet_x", 6.0)) < started.index("discord")   # X does not wait for the Discord start
 
     asyncio.run(go())
 
