@@ -159,13 +159,13 @@ def test_with_an_openrouter_key_the_judge_asks_openrouter_for_a_json_answer_and_
             sess = _Session(200, {"choices": [{"message": {"content": json.dumps(FUNDING)}}],
                                   "usage": {"prompt_tokens": 950, "completion_tokens": 40, "cost": 0.000115}})
             j = NewsJudge(session=sess)
-            assert j.provider == "openrouter" and j.model == "anthropic/claude-haiku-5.5"
-            assert j.mode == "anthropic/claude-haiku-5.5 via OpenRouter"
+            assert j.provider == "openrouter" and j.model == "anthropic/claude-sonnet-5.5"
+            assert j.mode == "anthropic/claude-sonnet-5.5 via OpenRouter"
             v = await j.judge("SN85 Vidaio", "We raised $5M")
             assert v == Verdict(True, "funding", "raised $5M led by a known fund", "ai")
             url, body, headers = sess.calls[0]
             assert url == OPENROUTER_URL and headers["Authorization"] == "Bearer sk-or-test"
-            assert body["model"] == "anthropic/claude-haiku-5.5" and body["messages"][0]["role"] == "system"
+            assert body["model"] == "anthropic/claude-sonnet-5.5" and body["messages"][0]["role"] == "system"
             fmt = body["response_format"]
             assert fmt["type"] == "json_schema" and fmt["json_schema"]["strict"] is True
             assert abs(j.stats["cost"] - 0.000115) < 1e-12
@@ -176,6 +176,15 @@ def test_with_an_openrouter_key_the_judge_asks_openrouter_for_a_json_answer_and_
             os.environ.pop("OPENROUTER_API_KEY", None)
     asyncio.run(go())
 
+
+
+def test_the_typical_news_always_counts_and_the_model_judges_anything_else_too():
+    from snmon.judge import CATEGORIES, SYSTEM
+    assert "ALWAYS count as important" in SYSTEM and "use your own judgment" in SYSTEM and '"other"' in SYSTEM
+    assert "Do not miss important news just because it is not in the list" in SYSTEM
+    assert "other" in CATEGORIES
+    v = NewsJudge._verdict(json.dumps({"important": True, "category": "other", "reason": "the founder joins OpenAI"}))
+    assert v.important and v.category == "other"                  # important news outside the examples is traded
 
 if __name__ == "__main__":
     n = 0

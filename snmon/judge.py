@@ -6,7 +6,7 @@ the bot bought, nothing moved). So each post is judged before it is sent to the 
 progress, funding / a new investor, revenue / customers / contracts, a notable partnership, a listing, a buyback / burn.
 
 An AI reads the post (and the X post it shares): through OpenRouter when OPENROUTER_API_KEY is set in .env (default
-model anthropic/claude-haiku-5.5: ~1 s, ~$0.00013 a post), else Claude directly when ANTHROPIC_API_KEY is set; with
+model anthropic/claude-sonnet-5.5: ~2-3 s, ~$0.003 a post), else Claude directly when ANTHROPIC_API_KEY is set; with
 neither, or when it does not answer in NEWS_AI_TIMEOUT seconds, keyword rules decide. The verdict goes to the bots with
 the news and onto the card.
 """
@@ -22,17 +22,15 @@ from dataclasses import dataclass
 log = logging.getLogger("snmon.judge")
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = {"openrouter": "anthropic/claude-haiku-5.5", "anthropic": "claude-opus-5-5"}
+DEFAULT_MODEL = {"openrouter": "anthropic/claude-sonnet-5.5", "anthropic": "claude-opus-5-5"}
 
 CATEGORIES = ["launch", "progress", "funding", "revenue", "partnership", "listing", "tokenomics", "other", "none"]
 
 SYSTEM = """You judge news about one Bittensor subnet for a trading bot. The bot buys the subnet's token the moment \
 important news appears and sells within minutes, so "important" means news that can make buyers act now.
 
-Use your own judgment: is this NEW, CONCRETE news that can move the token's price now? The categories below are typical \
-examples, not a complete list — anything else that clearly can move the price now is important too (category "other").
-
-Typical important news:
+Two rules, both apply:
+1. These ALWAYS count as important when they are new and concrete (the categories to answer with):
 - launch: a product, app, model, feature or mainnet / major version that is released or live now
 - progress: a big measurable milestone — a record, a benchmark beaten, usage or growth numbers
 - funding: money raised, a new investor or backer, a grant
@@ -40,6 +38,8 @@ Typical important news:
 - partnership: a partnership or integration with a notable company or project
 - listing: listed on an exchange or a major platform
 - tokenomics: a buyback, a burn, or the owner / team cutting their own emissions or selling less
+2. Beyond these, use your own judgment: any other NEW, CONCRETE news that can move the token's price now is important
+   too — answer "other". Do not miss important news just because it is not in the list above.
 
 Usually NOT important (unless it carries real news like the above):
 - replies or answers to users, support, bug reports and fixes, maintenance, downtime
