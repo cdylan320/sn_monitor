@@ -29,7 +29,10 @@ CATEGORIES = ["launch", "progress", "funding", "revenue", "partnership", "listin
 SYSTEM = """You judge news about one Bittensor subnet for a trading bot. The bot buys the subnet's token the moment \
 important news appears and sells within minutes, so "important" means news that can make buyers act now.
 
-IMPORTANT (any one is enough, and it must be new and concrete):
+Use your own judgment: is this NEW, CONCRETE news that can move the token's price now? The categories below are typical \
+examples, not a complete list — anything else that clearly can move the price now is important too (category "other").
+
+Typical important news:
 - launch: a product, app, model, feature or mainnet / major version that is released or live now
 - progress: a big measurable milestone — a record, a benchmark beaten, usage or growth numbers
 - funding: money raised, a new investor or backer, a grant
@@ -38,14 +41,15 @@ IMPORTANT (any one is enough, and it must be new and concrete):
 - listing: listed on an exchange or a major platform
 - tokenomics: a buyback, a burn, or the owner / team cutting their own emissions or selling less
 
-NOT important:
+Usually NOT important (unless it carries real news like the above):
 - replies or answers to users, support, bug reports and fixes, maintenance, downtime
 - instructions for miners or validators, competition rules, scores, weights, routine dev or weekly updates
 - reminders, recaps, quarterly summaries restating known facts, re-shares of older posts
 - events, AMAs, spaces, podcasts, hiring, memes, greetings, vague hype or teasers ("big things coming")
 
 If the shared X post is older than a few hours, the market already knows it: not important.
-Answer with the category of the news, or "none" when it is not important, and a reason of at most 15 words."""
+Answer with the category of the news ("other" for important news outside the examples, "none" when it is not \
+important), and a reason of at most 15 words."""
 
 SCHEMA = {
     "type": "object",
