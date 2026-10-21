@@ -511,6 +511,18 @@ class App:
                 "color": 0x5865F2,
             }], "allowed_mentions": {"parse": []}})
 
+    def _xl_timing_text(self) -> str:
+        """The X list timing so far: how long after posting posts showed up in the list, and on fxtwitter when it was
+        first (posts and replies of the members, the last 300)."""
+        rows = self.news.xl_timing
+        if not rows:
+            return ""
+        lst = sorted(a for a, _ in rows)
+        fx = sorted(f for _, f in rows if f is not None)
+        return (f" · X list timing ({len(rows)} posts): in the list after {lst[len(lst) // 2]:.1f} s median"
+                f" (fastest {lst[0]:.1f}, slowest {lst[-1]:.1f}); fxtwitter first {len(fx)}×"
+                + (f", after {fx[len(fx) // 2]:.1f} s median" if fx else ""))
+
     def _news_where(self) -> str:
         n = sum(1 for c in self.news.channels.values() if c.netuid is not None)
         teams = sum(1 for c in self.news.channels.values() if c.team_users or c.team_roles)
@@ -737,6 +749,7 @@ class App:
                              + (f", X list reads {self.news.stats.get('xl_polls', 0)} ok / {self.news.stats.get('xl_fail', 0)} failed"
                                 + (" (OFF: login refused)" if self.news.stats.get("xl_off") else "")
                                 + f", first seen by: list {self.news.stats.get('xl_first', 0)}, fxtwitter {self.news.stats.get('xs_first', 0)}"
+                                + self._xl_timing_text()
                                 if self.cfg.news_x_list and self.cfg.x_auth_token else "") + ")"
                              if self.news else "")))
 

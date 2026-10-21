@@ -132,6 +132,8 @@ class NewsMonitor:
         self._x_ids: dict[str, list[str]] = {}  # X handle → tweet ids already seen
         self._last: dict[str, int] = {}          # channel → last message id, as saved (also for channels not loaded)
         self._x_sub: dict[str, float] = {}       # tweet id → when a subnet's own account was seen posting it
+        self._x_first: dict[str, tuple[float, str]] = {}   # tweet id → (first seen, by "xs" fxtwitter / "xl" the X list)
+        self.xl_timing: list[tuple[float, float | None]] = []   # (s after posting it was in the list, … on fxtwitter if first)
         self._x_pause_until = 0.0                # fxtwitter answered 429: no X request before this (every X loop)
         self._x_discovery: asyncio.Task | None = None
         self._recent: dict[str, list[tuple[float, str, bool]]] = {}  # channel → (time, author, asked a question)
@@ -752,6 +754,11 @@ class NewsMonitor:
                          key=lambda t: int(t["id"]))
         seen.extend(fresh)
         del seen[:-200]
+        now = time.time()
+        for tid in fresh:                          # which source saw it first, and when (the X list timing)
+            self._x_first.setdefault(tid, (now, source))
+        if len(self._x_first) > 20000:
+            self._x_first = dict(list(self._x_first.items())[-10000:])
         if fresh:
             self._save_state()
         for t in new:
@@ -794,6 +801,7 @@ class NewsMonitor:
 
             syncing: asyncio.Task | None = None
             next_sync = 0.0
+            in_list: set[str] = set()                # ids the list has shown (the first read only fills it)
             try:
                 while True:
                     if time.time() >= next_sync and (syncing is None or syncing.done()):
@@ -814,6 +822,7 @@ class NewsMonitor:
                         items = None
                     if items is not None:
                         self.stats["xl_polls"] = self.stats.get("xl_polls", 0) + 1
+                        self._xl_timing(items, in_list)
                         watch = accounts.accounts()
                         by: dict[str, list[dict]] = {}
                         for t in items:              # a member's post, or the post it reposted
@@ -830,6 +839,31 @@ class NewsMonitor:
             finally:
                 if syncing is not None:
                     syncing.cancel()
+
+    def _xl_timing(self, items: list[dict], in_list: set[str]) -> None:
+        """How many seconds after posting a post shows up in the X list, next to fxtwitter's (when it saw it first) —
+        21-22 Oct: the list never saw a post first (5 of 5 by fxtwitter), so it is measured on every post and reply."""
+        now, first_read = time.time(), not in_list
+        for t in items:
+            tid = str(t.get("id"))
+            if tid in in_list or t.get("reposted_by"):   # a repost carries the original's id and date
+                continue
+            in_list.add(tid)
+            age = now - float(t.get("created_timestamp") or now)
+            if first_read or age > X_SUBNET_MAX_AGE_S:
+                continue
+            seen = self._x_first.get(tid)
+            fx = seen[0] - float(t["created_timestamp"]) if seen and seen[1] == "xs" else None
+            self.xl_timing.append((age, fx))
+            del self.xl_timing[:-300]
+            a = t.get("author") or {}
+            if not t.get("replying_to"):
+                print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S')}    ↳ X list timing: @{a.get('screen_name')}'s post was in "
+                              f"the list {age:.1f} s after posting" + (f" · fxtwitter had it after {fx:.1f} s" if fx is not None
+                                                                         else " · first")))
+        if len(in_list) > 5000:
+            in_list.clear()
+            in_list.update(str(t.get("id")) for t in items)
 
     def _x_subnet(self, t: dict) -> int | None:
         """Which subnet a tweet is about: 'SN81' / 'subnet 81', an @handle containing a subnet's name, or the name itself

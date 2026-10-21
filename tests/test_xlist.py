@@ -183,6 +183,22 @@ def test_the_list_loop_sends_new_posts_and_stops_when_the_login_is_refused():
     asyncio.run(go())
 
 
+
+def test_the_list_timing_says_how_late_posts_show_up_in_the_list_and_on_fxtwitter():
+    # 21-22 Oct: the list never saw a post first (5 of 5 by fxtwitter) — so how late is it?
+    m = nm()
+    in_list = set()
+    m._xl_timing([post(1, age=3000)], in_list)                     # the first read only fills what the list has shown
+    assert m.xl_timing == []
+    m._x_first["2"] = (time.time() - 6.0, "xs")                     # fxtwitter saw post 2 four seconds after it was posted
+    m._xl_timing([post(2, age=10.0), post(3, age=2.5, replying_to={"screen_name": "x", "status": "1"}),
+                  post(4, author="other", reposted_by={"screen_name": "yanez__ai"}), post(1, age=3000)], in_list)
+    (a2, fx2), (a3, fx3) = m.xl_timing
+    assert 9.5 < a2 < 10.5 and 3.5 < fx2 < 4.5 and 2.0 < a3 < 3.0 and fx3 is None   # a reply counts, a repost does not
+    m._xl_timing([post(2, age=12.0)], in_list)
+    assert len(m.xl_timing) == 2                                    # each post once
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):
