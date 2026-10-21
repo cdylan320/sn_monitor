@@ -5,8 +5,10 @@ routine — answers to users, dev notes, shares of old tweets (SN124: a team mem
 the bot bought, nothing moved). So each post is judged before it is sent to the bots: important = a product launch, big
 progress, funding / a new investor, revenue / customers / contracts, a notable partnership, a listing, a buyback / burn.
 
-Claude reads the post (and the X post it shares) when ANTHROPIC_API_KEY is set in .env; else, or when it does not answer
-in NEWS_AI_TIMEOUT seconds, keyword rules decide. The verdict goes to the bots with the news and onto the card.
+An AI reads the post (and the X post it shares): through OpenRouter when OPENROUTER_API_KEY is set in .env (default
+model anthropic/claude-haiku-5.5: ~1 s, ~$0.00013 a post), else Claude directly when ANTHROPIC_API_KEY is set; with
+neither, or when it does not answer in NEWS_AI_TIMEOUT seconds, keyword rules decide. The verdict goes to the bots with
+the news and onto the card.
 """
 from __future__ import annotations
 
@@ -18,6 +20,9 @@ import re
 from dataclasses import dataclass
 
 log = logging.getLogger("snmon.judge")
+
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_MODEL = {"openrouter": "anthropic/claude-haiku-5.5", "anthropic": "claude-opus-5-5"}
 
 CATEGORIES = ["launch", "progress", "funding", "revenue", "partnership", "listing", "tokenomics", "other", "none"]
 
@@ -91,13 +96,18 @@ def rules(text: str, tweet_age_s: float | None = None) -> Verdict:
 
 
 class NewsJudge:
-    """One verdict per post (cached by its text); Claude when it is set up, the rules otherwise."""
+    """One verdict per post (cached by its text); an AI when one is set up (OpenRouter, or Claude directly), the rules
+    otherwise."""
 
-    def __init__(self, model: str = "claude-opus-5-5", timeout: float = 8.0, client=None) -> None:
-        self.model = model
+    def __init__(self, model: str = "", timeout: float = 8.0, client=None, session=None) -> None:
         self.timeout = timeout
-        self.client = client
-        if self.client is None and os.getenv("ANTHROPIC_API_KEY"):
+        self.client = client                     # AsyncAnthropic (Claude directly)
+        self.session = session                   # aiohttp session (OpenRouter)
+        self.openrouter_key = "" if client is not None else (os.getenv("OPENROUTER_API_KEY") or "").strip()
+        self.provider = ("openrouter" if self.openrouter_key or session is not None
+                         else "anthropic" if client is not None or os.getenv("ANTHROPIC_API_KEY") else "")
+        self.model = model or DEFAULT_MODEL.get(self.provider, "")
+        if self.client is None and self.provider == "anthropic":
             try:
                 import anthropic
                 self.client = anthropic.AsyncAnthropic(max_retries=0)
@@ -105,11 +115,19 @@ class NewsJudge:
                 log.warning("ANTHROPIC_API_KEY is set but the anthropic package is not installed "
                             "(.venv/bin/pip install -r requirements.txt) — judging news by keyword rules")
         self._cache: dict[str, Verdict] = {}
-        self.stats = {"ai": 0, "rules": 0, "ai_fail": 0}
+        self.stats = {"ai": 0, "rules": 0, "ai_fail": 0, "cost": 0.0}
+
+    @property
+    def ready(self) -> bool:
+        return self.provider == "openrouter" or self.client is not None
 
     @property
     def mode(self) -> str:
-        return f"Claude ({self.model})" if self.client is not None else "keyword rules (no ANTHROPIC_API_KEY)"
+        if self.provider == "openrouter":
+            return f"{self.model} via OpenRouter"
+        if self.client is not None:
+            return f"Claude ({self.model})"
+        return "keyword rules (no OPENROUTER_API_KEY / ANTHROPIC_API_KEY)"
 
     async def judge(self, subnet: str, text: str, tweet_text: str = "", tweet_age_s: float | None = None) -> Verdict:
         key = f"{subnet}\n{text}\n{tweet_text}"
@@ -117,9 +135,10 @@ class NewsJudge:
             return self._cache[key]
         whole = "\n\n".join(x for x in (text, tweet_text) if x)
         v = None
-        if self.client is not None:
+        if self.ready:
             try:
-                v = await asyncio.wait_for(self._ask(subnet, text, tweet_text, tweet_age_s), self.timeout)
+                ask = self._ask_openrouter if self.provider == "openrouter" else self._ask
+                v = await asyncio.wait_for(ask(subnet, text, tweet_text, tweet_age_s), self.timeout)
             except Exception as e:     # timeout, API error, refusal, bad answer: the rules decide
                 self.stats["ai_fail"] += 1
                 log.warning("news judge: Claude gave no verdict (%s: %s) — using the keyword rules", type(e).__name__, str(e)[:120])
@@ -131,11 +150,42 @@ class NewsJudge:
             self._cache.pop(next(iter(self._cache)))
         return v
 
-    async def _ask(self, subnet: str, text: str, tweet_text: str, tweet_age_s: float | None) -> Verdict:
+    @staticmethod
+    def _question(subnet: str, text: str, tweet_text: str, tweet_age_s: float | None) -> str:
         parts = [f"Subnet: {subnet}", f"Post:\n{text[:3000]}"]
         if tweet_text:
             age = f" (posted {tweet_age_s / 60:.0f} minutes ago)" if tweet_age_s is not None else ""
             parts.append(f"The X post it shares{age}:\n{tweet_text[:3000]}")
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _verdict(answer: str, by: str = "ai") -> Verdict:
+        data = json.loads(answer)
+        important = bool(data["important"]) and data["category"] != "none"
+        return Verdict(important, data["category"], str(data["reason"])[:160], by)
+
+    async def _ask_openrouter(self, subnet: str, text: str, tweet_text: str, tweet_age_s: float | None) -> Verdict:
+        """OpenRouter's chat completions API, with a JSON-schema answer; what it cost is added to stats["cost"]."""
+        if self.session is None:
+            import aiohttp
+            self.session = aiohttp.ClientSession()
+        body = {
+            "model": self.model,
+            "messages": [{"role": "system", "content": SYSTEM},
+                         {"role": "user", "content": self._question(subnet, text, tweet_text, tweet_age_s)}],
+            "response_format": {"type": "json_schema",
+                                "json_schema": {"name": "news_check", "strict": True, "schema": SCHEMA}},
+            "max_tokens": 2048,
+        }
+        async with self.session.post(OPENROUTER_URL, json=body,
+                                     headers={"Authorization": f"Bearer {self.openrouter_key}"}) as r:
+            data = await r.json(content_type=None)
+            if r.status != 200 or "error" in data:
+                raise RuntimeError(f"OpenRouter {r.status}: {str(data.get('error'))[:120]}")
+        self.stats["cost"] += float((data.get("usage") or {}).get("cost") or 0)
+        return self._verdict(data["choices"][0]["message"]["content"])
+
+    async def _ask(self, subnet: str, text: str, tweet_text: str, tweet_age_s: float | None) -> Verdict:
         kwargs = {}
         if not self.model.startswith("claude-haiku"):          # Haiku has no server-side fallback
             kwargs = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
@@ -143,12 +193,10 @@ class NewsJudge:
             model=self.model,
             max_tokens=2048,
             system=SYSTEM,
-            messages=[{"role": "user", "content": "\n\n".join(parts)}],
+            messages=[{"role": "user", "content": self._question(subnet, text, tweet_text, tweet_age_s)}],
             output_config={"effort": "low", "format": {"type": "json_schema", "schema": SCHEMA}},
             **kwargs,
         )
         if r.stop_reason == "refusal":
             raise RuntimeError("refused")
-        data = json.loads(next(b.text for b in r.content if b.type == "text"))
-        important = bool(data["important"]) and data["category"] != "none"
-        return Verdict(important, data["category"], str(data["reason"])[:160], "ai")
+        return self._verdict(next(b.text for b in r.content if b.type == "text"))

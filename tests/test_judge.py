@@ -7,7 +7,7 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from snmon.judge import NewsJudge, Verdict, rules  # noqa: E402
+from snmon.judge import OPENROUTER_URL, NewsJudge, Verdict, rules  # noqa: E402
 from snmon.news import XPOST, Channel, NewsMonitor, x_posted  # noqa: E402
 
 
@@ -126,6 +126,54 @@ def test_a_discord_share_is_judged_with_the_shared_x_post_and_the_verdict_goes_t
         ev = sent[0]
         assert ev["important"] is False and ev["judge"] == "ai" and ev["why"] == "a 2-day-old quarterly update"
         assert any(f["name"] == "News check (AI)" and "Not important" in f["value"] for f in cards[0]["embeds"][0]["fields"])
+    asyncio.run(go())
+
+
+class _Session:
+    """A pretend aiohttp session for OpenRouter: records each POST, answers `status` / `data`."""
+    def __init__(self, status, data):
+        self.calls, self.status, self.data = [], status, data
+
+    def post(self, url, json=None, headers=None):
+        sess = self
+
+        class R:
+            status = sess.status
+
+            async def __aenter__(self):
+                sess.calls.append((url, json, headers))
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def json(self, content_type=None):
+                return sess.data
+        return R()
+
+
+def test_with_an_openrouter_key_the_judge_asks_openrouter_for_a_json_answer_and_counts_the_cost():
+    async def go():
+        os.environ["OPENROUTER_API_KEY"] = "sk-or-test"
+        try:
+            sess = _Session(200, {"choices": [{"message": {"content": json.dumps(FUNDING)}}],
+                                  "usage": {"prompt_tokens": 950, "completion_tokens": 40, "cost": 0.000115}})
+            j = NewsJudge(session=sess)
+            assert j.provider == "openrouter" and j.model == "anthropic/claude-haiku-5.5"
+            assert j.mode == "anthropic/claude-haiku-5.5 via OpenRouter"
+            v = await j.judge("SN85 Vidaio", "We raised $5M")
+            assert v == Verdict(True, "funding", "raised $5M led by a known fund", "ai")
+            url, body, headers = sess.calls[0]
+            assert url == OPENROUTER_URL and headers["Authorization"] == "Bearer sk-or-test"
+            assert body["model"] == "anthropic/claude-haiku-5.5" and body["messages"][0]["role"] == "system"
+            fmt = body["response_format"]
+            assert fmt["type"] == "json_schema" and fmt["json_schema"]["strict"] is True
+            assert abs(j.stats["cost"] - 0.000115) < 1e-12
+            broke = NewsJudge(session=_Session(402, {"error": {"message": "Insufficient credits", "code": 402}}))
+            w = await broke.judge("SN85 Vidaio", "Introducing our app, live now")
+            assert w.by == "rules" and w.important and broke.stats["ai_fail"] == 1   # out of credits: the rules decide
+        finally:
+            os.environ.pop("OPENROUTER_API_KEY", None)
     asyncio.run(go())
 
 

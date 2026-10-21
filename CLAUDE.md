@@ -43,7 +43,7 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
   balance (everything sold first only if short). Exit 1%.
 - Reversal, dump (≥70 τ with ≥1% drop, or ≥5% drop alone; also from the mempool; never in a pool under 5,500 τ —
   `DUMP_MIN_POOL_TAO`), news (from the monitor's feed, incl. `x_subnet`: a subnet's own X post; only news the monitor's
-  judge calls important — `snmon/judge.py`, Claude or keyword rules; never a share of an X post over 10 min old): free balance, ≤5 τ in
+  judge calls important — `snmon/judge.py`, an AI via OpenRouter (or Claude directly) or keyword rules; never a share of an X post over 10 min old): free balance, ≤5 τ in
   pools under 5,000 τ; exit 1% stop, 1% trail, or no new high for 25 blocks.
 - const: a post naming no subnet but replying to / mentioning someone is matched through that person's X profile (a
   subnet owner's bio names the subnet: @0xarrash → SN8).
