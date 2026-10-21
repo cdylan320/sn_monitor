@@ -31,6 +31,14 @@ The monitor serves its news to the bots: `GET http://<monitor host>:8795/news` (
 `NEWS_FEED_TOKEN` in the monitor's `.env`). The bots' `NEWS_FEED_URL` holds this host's IP, so **if the monitor moves to
 another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
 
+## News sources
+- Subnet X accounts: fxtwitter (one account per request) AND a private X list read with the user's X login
+  (`X_AUTH_TOKEN` / `X_CT0` = their x.com cookies, account @cdylan321 — the user chose this knowing X may lock it;
+  `snmon/xlist.py`, list + members in `data/x_list.json`). If the login is refused, the list stops and fxtwitter goes on.
+- Discord: a user account's token (`NEWS_DISCORD_TOKEN`, now vic_x.; the first one was removed from the server on 21 Oct).
+- Every post is judged before it goes to the bots (`snmon/judge.py`): gpt-6.1-sol ×2 raced + gpt-6-luna, whose
+  "important" goes out at once.
+
 ## Trading rules (the user's decisions; `README.md` and `.env.example` of sn_trader are the reference)
 - New subnet (start call): sells everything, stakes all (`LAUNCH_MAX_STAKE_TAO=0`), sent in the block after the start call
   is seen (same block when the start call is visible in the mempool). Exit: no floor; not acted on in the start call's
