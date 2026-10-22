@@ -368,6 +368,64 @@ def test_channels_not_loaded_keep_their_saved_position():
         news_mod.STATE_FILE = old
 
 
+
+CONST = "389189199514959893"     # const's Discord user id (username consttt, "consτ", Supermod, account from 2017)
+
+
+def test_every_const_message_is_news_even_a_short_one_but_not_someone_else_called_const():
+    # 22 Oct, #97: const posted an image and "Nice work" (and "go ingot" before) — the image was judged "not important",
+    # the two short ones were dropped as chat
+    m = nm()
+    m.const_ids = {CONST}
+    assert m.classify(msg(CONST, "Nice work", type=19), CH) == (TEAM, "const")
+    assert m.classify(msg(CONST, "go ingot"), CH) == (TEAM, "const")
+    assert m.classify(msg(CONST, "", attachments=[{"content_type": "image/png"}]), CH) == (TEAM, "const")
+    assert m.classify(msg(CONST, "@everyone big news", mention_everyone=True), CH) == (ANNOUNCE, "const")
+    fake = msg("IMPOSTOR", "Nice work")
+    fake["author"].update(username="consttt_", global_name="consτ")
+    assert m.classify(fake, CH) is None                                   # the name proves nothing: only the id counts
+
+
+def test_consts_posts_are_always_important_without_asking_the_ai_and_go_to_the_bots_as_such():
+    async def go():
+        m = nm()
+        m.const_ids, m.const_x = {CONST}, {"const_reborn"}
+        m.meta.subnets = {78: m.meta.info(78)}
+        m.dry_run = True
+        sent, cards = [], []
+
+        class Feed:
+            def publish(self, ev):
+                sent.append(ev)
+                return 1
+
+        class NoAI:
+            async def judge(self, *a, **k):
+                raise AssertionError("const's posts are not left to the AI")
+            stats = {}
+        m.news_feed, m.judge = Feed(), NoAI()
+
+        async def send(payload, netuid, p0):
+            cards.append(payload)
+        m._send = send
+        await m._post(msg(CONST, "Nice work", type=19), CH, TEAM, "const")
+        ev = sent[-1]
+        assert ev["important"] is True and ev["category"] == "const" and ev["judge"] == "const" and ev["who"] == "const"
+        fields = cards[-1]["embeds"][0]["fields"]
+        assert any(f["name"] == "News check (const)" and "Important" in f["value"] for f in fields)
+        # on X: const's own activity, and a subnet quoting him
+        tw = {"id": "2113000000000000000", "author": {"screen_name": "const_reborn", "name": "const"}, "text": "SN78 is cooking",
+              "url": "https://x.com/const_reborn/status/2113000000000000000", "created_timestamp": time.time() - 5}
+        await m._post_x(tw, "const_reborn")
+        assert any("const posted on X" in f["value"] for f in cards[-1]["embeds"][0]["fields"])
+        q = {"id": "2113000000000000001", "author": {"screen_name": "umi_sn78", "name": "umi"}, "text": "thank you!",
+             "quote": {"text": "SN78 is cooking", "author": {"screen_name": "const_reborn"}},
+             "url": "https://x.com/umi_sn78/status/2113000000000000001", "created_timestamp": time.time() - 5}
+        await m._post_x(q, "umi_sn78", feed_kind="x_subnet", netuid=78)
+        assert sent[-1]["important"] is True and sent[-1]["why"] == "it quotes const"
+    asyncio.run(go())
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

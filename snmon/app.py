@@ -89,6 +89,8 @@ class App:
                 min_team_chars=cfg.news_min_team_chars, dry_run=cfg.dry_run)
             self.news.judge = NewsJudge(cfg.news_ai_model, cfg.news_ai_timeout, race=cfg.news_ai_race,
                                         fast_model=cfg.news_ai_fast_model)
+            self.news.const_ids = set(cfg.news_const_discord_ids)
+            self.news.const_x = {h.lower() for h in cfg.news_x_accounts}
         self.trend: TrendMonitor | None = None
         if cfg.trend_webhook_url:
             self.bars = Bars(ROOT / "data" / "bars.db")

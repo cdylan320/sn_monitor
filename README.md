@@ -257,6 +257,10 @@ sends it. X does not allow automated reading and may lock the account; if the lo
 alone (the 5-minute status line says "OFF: login refused"). **Off by default** (`NEWS_X_LIST=false`): measured 21-22 Oct,
 X adds a post to a list 6-14 s late (median ~9.5 s), and fxtwitter had it first 10 of 12 times (~5 s).
 
+**const is always important.** Everything const writes in a subnet's Discord channel is news — even "Nice work" or only
+an image — matched by his user id (`NEWS_CONST_DISCORD_IDS`), never by name. That, his X posts / reposts / replies, and a
+subnet quoting or sharing his X post are always judged important ("News check (const)"), without asking the AI.
+
 **News check.** Every post about a subnet is judged before it goes to the bots: is it *important* news — a product
 launch, big progress, funding or a new investor, revenue / customers / contracts, a notable partnership, a listing, a
 buyback or burn — or routine (a reply, a dev note, a reminder, a share of an old post)? An AI judges it — through

@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from . import alerts, fmt
 from .config import ROOT
 from .gateway import DiscordUser
+from .judge import Verdict
 
 log = logging.getLogger("snmon.news")
 
@@ -142,6 +143,8 @@ class NewsMonitor:
         self.ready = False
         self.news_feed = None       # NewsFeed: news events for the trading bots (set by the app when NEWS_FEED_PORT is on)
         self.judge = None           # NewsJudge: is a post important news? (set by the app)
+        self.const_ids: set[str] = set()   # const's Discord user id(s): all he posts is news, always important (set by the app)
+        self.const_x: set[str] = set()     # … and his X account(s), lowercase (NEWS_X_ACCOUNTS)
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -348,6 +351,10 @@ class NewsMonitor:
             return None
         content = m.get("content") or ""
         bot = m["author"].get("bot")
+        if not bot and m["author"]["id"] in self.const_ids:
+            # const's every word in a subnet's channel is news — "go ingot", "Nice work", an image (SN97, 22 Oct) —
+            # matched by his user id, never by name (others call themselves "const" too)
+            return (ANNOUNCE if m.get("mention_everyone") else TEAM), "const"
         who = None if bot else self.is_team(m["author"]["id"], ch)
         if m.get("mention_everyone") and not bot:
             return ANNOUNCE, who
@@ -415,7 +422,7 @@ class NewsMonitor:
     def build(self, m: dict, ch: Channel, kind: str, who: str | None) -> tuple[dict, int | None]:
         a = m["author"]
         name = (m.get("member") or {}).get("nick") or a.get("global_name") or a.get("username") or "unknown"
-        badge = {"team": " · subnet team", "staff": " · server staff"}.get(who or "", "")
+        badge = {"team": " · subnet team", "staff": " · server staff", "const": " · const"}.get(who or "", "")
         avatar = (f"https://cdn.discordapp.com/avatars/{a['id']}/{a['avatar']}.png?size=128" if a.get("avatar")
                   else "https://cdn.discordapp.com/embed/avatars/0.png")
         jump = f"https://discord.com/channels/{self.guild_id}/{ch.id}/{m['id']}"
@@ -525,8 +532,13 @@ class NewsMonitor:
         x = X_RE.search(m.get("content") or "")
         tw = await self.tweet(x.group(0)) if x else None       # the judge reads the X post it shares too
         text = self._clean(m)
-        verdict = await self._verdict(ch.netuid, text, tw["description"] if tw else "",
-                                      time.time() - x_posted(x.group(2)) if x else None)
+        if who == "const":
+            verdict = const_verdict("const posted in the subnet's channel")
+        elif x and x.group(1).lower() in self.const_x:
+            verdict = const_verdict("a share of const's X post")
+        else:
+            verdict = await self._verdict(ch.netuid, text, tw["description"] if tw else "",
+                                          time.time() - x_posted(x.group(2)) if x else None)
         self._publish(ch.netuid, feed_kind, who, f"discord #{ch.name}", text,
                       f"https://discord.com/channels/{self.guild_id}/{ch.id}/{m['id']}", _ts(m), verdict)
         payload, p0 = self.build(m, ch, kind, who)
@@ -912,7 +924,12 @@ class NewsMonitor:
             desc += (f"\n\n**In reply to {pa.get('name', '')} (@{pa.get('screen_name', '')}):**\n> "
                      + parent["text"].replace("\n", "\n> ")[:600])
         n = netuid if feed_kind == "x_subnet" else self._x_subnet(t)
-        verdict = await self._verdict(n, text + ("\n\n" + quote["text"] if quote.get("text") else ""))
+        if handle.lower() in self.const_x:
+            verdict = const_verdict(f"const {kind} on X")
+        elif ((quote.get("author") or {}).get("screen_name") or "").lower() in self.const_x:
+            verdict = const_verdict("it quotes const")
+        else:
+            verdict = await self._verdict(n, text + ("\n\n" + quote["text"] if quote.get("text") else ""))
         # a repost is dated by the original tweet — for the bots it is news now
         self._publish(n, feed_kind, me.get("screen_name") or handle, f"x @{handle}", text, t.get("url") or "",
                       time.time() if rb or not t.get("created_timestamp") else float(t["created_timestamp"]), verdict)
@@ -1035,8 +1052,14 @@ def x_posted(status_id: str | int) -> float:
 def verdict_field(v) -> dict:
     """The judge's verdict as a card field."""
     head = f"🔥 **Important** · {v.category}" if v.important else "▫️ Not important"
-    return {"name": f"News check ({'AI' if v.by == 'ai' else 'rules'})", "value": f"{head} — {v.reason}"[:1000],
-            "inline": False}
+    by = {"ai": "AI", "const": "const"}.get(v.by, "rules")
+    return {"name": f"News check ({by})", "value": f"{head} — {v.reason}"[:1000], "inline": False}
+
+
+def const_verdict(reason: str) -> Verdict:
+    """const's posts, reposts and mentions are always important news — not left to the AI (22 Oct: his image and
+    "Nice work" in SN97's channel were judged "no post content, not important")."""
+    return Verdict(True, "const", reason, "const")
 
 
 def x_own_post(t: dict, handle: str) -> bool:
