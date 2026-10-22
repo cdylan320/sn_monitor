@@ -145,6 +145,7 @@ class NewsMonitor:
         self.judge = None           # NewsJudge: is a post important news? (set by the app)
         self.const_ids: set[str] = set()   # const's Discord user id(s): all he posts is news, always important (set by the app)
         self.const_x: set[str] = set()     # … and his X account(s), lowercase (NEWS_X_ACCOUNTS)
+        self.owner_important = True        # a subnet's own X account's post is always important (NEWS_X_SUBNET_IMPORTANT)
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -928,6 +929,10 @@ class NewsMonitor:
             verdict = const_verdict(f"const {kind} on X")
         elif ((quote.get("author") or {}).get("screen_name") or "").lower() in self.const_x:
             verdict = const_verdict("it quotes const")
+        elif feed_kind == "x_subnet" and self.owner_important:
+            # the subnet's owner speaking on its own account (22 Oct: @TargonCompute's quote was judged "not important",
+            # then 400 τ was staked into SN4 in the next blocks)
+            verdict = Verdict(True, "owner", f"a post by the subnet's own X account (@{handle})", "owner")
         else:
             verdict = await self._verdict(n, text + ("\n\n" + quote["text"] if quote.get("text") else ""))
         # a repost is dated by the original tweet — for the bots it is news now
@@ -1052,7 +1057,7 @@ def x_posted(status_id: str | int) -> float:
 def verdict_field(v) -> dict:
     """The judge's verdict as a card field."""
     head = f"🔥 **Important** · {v.category}" if v.important else "▫️ Not important"
-    by = {"ai": "AI", "const": "const"}.get(v.by, "rules")
+    by = {"ai": "AI", "const": "const", "owner": "the subnet's own account"}.get(v.by, "rules")
     return {"name": f"News check ({by})", "value": f"{head} — {v.reason}"[:1000], "inline": False}
 
 

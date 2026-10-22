@@ -91,6 +91,7 @@ class App:
                                         fast_model=cfg.news_ai_fast_model)
             self.news.const_ids = set(cfg.news_const_discord_ids)
             self.news.const_x = {h.lower() for h in cfg.news_x_accounts}
+            self.news.owner_important = cfg.news_x_subnet_important
         self.trend: TrendMonitor | None = None
         if cfg.trend_webhook_url:
             self.bars = Bars(ROOT / "data" / "bars.db")

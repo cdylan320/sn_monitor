@@ -43,6 +43,7 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
 - Every post is judged before it goes to the bots (`snmon/judge.py`): gpt-6.1-sol ×2 raced + gpt-6-luna, whose
   "important" goes out at once. const is never left to the AI: everything he writes in a subnet's Discord channel (by his
   user id, `NEWS_CONST_DISCORD_IDS`), his X posts / reposts / replies, and a subnet quoting or sharing him = important.
+  A subnet's own X account's post / quote (its owner) is always important too (`NEWS_X_SUBNET_IMPORTANT`).
 
 ## Trading rules (the user's decisions; `README.md` and `.env.example` of sn_trader are the reference)
 - New subnet (start call): sells everything, stakes all (`LAUNCH_MAX_STAKE_TAO=0`), sent in the block after the start call

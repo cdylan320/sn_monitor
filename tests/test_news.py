@@ -426,6 +426,47 @@ def test_consts_posts_are_always_important_without_asking_the_ai_and_go_to_the_b
     asyncio.run(go())
 
 
+
+def test_a_post_by_the_subnets_own_x_account_is_always_important_without_asking_the_ai():
+    # 22 Oct: @TargonCompute (SN4) quoted a post about exploits — judged "not important"; then 52, 100, 50 and 200 τ
+    # were staked into SN4 in the next blocks
+    async def go():
+        m = nm()
+        m.dry_run = True
+        sent, cards = [], []
+
+        class Feed:
+            def publish(self, ev):
+                sent.append(ev)
+                return 1
+
+        class NoAI:
+            async def judge(self, *a, **k):
+                raise AssertionError("the owner's post is not left to the AI")
+            stats = {}
+        m.news_feed, m.judge = Feed(), NoAI()
+
+        async def send(payload, netuid, p0):
+            cards.append(payload)
+        m._send = send
+        q = {"id": "2113100000000000000", "author": {"screen_name": "TargonCompute", "name": "Targon"},
+             "text": "With exploits on the rise, plan for the host getting breached.",
+             "quote": {"text": "Every few hours, a new exploit", "author": {"screen_name": "narrativereach"}},
+             "url": "https://x.com/TargonCompute/status/2113100000000000000", "created_timestamp": time.time() - 3}
+        await m._post_x(q, "TargonCompute", feed_kind="x_subnet", netuid=4)
+        ev = sent[-1]
+        assert ev["kind"] == "x_subnet" and ev["important"] is True and ev["category"] == "owner" and ev["judge"] == "owner"
+        assert any(f["name"] == "News check (the subnet's own account)" and "Important" in f["value"]
+                   for f in cards[-1]["embeds"][0]["fields"])
+        m.owner_important = False                          # NEWS_X_SUBNET_IMPORTANT=false: the AI judges it again
+        try:
+            await m._post_x(dict(q, id="2113100000000000001"), "TargonCompute", feed_kind="x_subnet", netuid=4)
+            assert False, "with the setting off, the AI is asked"
+        except AssertionError as e:
+            assert "not left to the AI" in str(e)
+    asyncio.run(go())
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):
