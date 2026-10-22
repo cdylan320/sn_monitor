@@ -26,6 +26,10 @@ Two projects, two repos, worked on together. Sessions start in `/root/draven/sn_
 - Monitor: `for f in tests/test_*.py; do .venv/bin/python $f; done` (no pytest in its venv).
 - Trader: `cd ../sn_trader && .venv/bin/python -m pytest -q` (all pass except the 2 sandwich tests).
 
+## The manager UI (trader repo, `snui/`)
+`./ui.sh` on the trading machine: a local web board (port 8790) that starts / stops the bots, toggles trades, edits
+settings, adds / removes wallets' bots, and keeps the global skip list (`data/skip_netuids.json`, re-read by every bot).
+
 ## The link between the two
 The monitor serves its news to the bots: `GET http://<monitor host>:8795/news` (SSE, `NEWS_FEED_PORT` /
 `NEWS_FEED_TOKEN` in the monitor's `.env`). The bots' `NEWS_FEED_URL` holds this host's IP, so **if the monitor moves to
