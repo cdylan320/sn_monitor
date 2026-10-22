@@ -211,7 +211,7 @@ def load() -> Config:
         news_x_subnets=_bool("NEWS_X_SUBNETS", True),
         news_x_subnet_rate=_float("NEWS_X_SUBNET_RATE", 12.0),
         news_x_subnet_handles=_handles("NEWS_X_SUBNET_HANDLES"),
-        news_x_list=_bool("NEWS_X_LIST", True),
+        news_x_list=_bool("NEWS_X_LIST", False),
         news_x_list_seconds=_float("NEWS_X_LIST_SECONDS", 2.0),
         x_auth_token=(os.getenv("X_AUTH_TOKEN") or "").strip().strip('"'),
         x_ct0=(os.getenv("X_CT0") or "").strip().strip('"'),
