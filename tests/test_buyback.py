@@ -57,6 +57,13 @@ def test_the_buyback_card():
         p = w.sent[-1]
         assert "💰 **BUYBACK** · **SN63 Enigma** — the owner bought 50.00 τ of its own token" in p["content"]
         assert p["embeds"][0]["title"] == "💰 BUYBACK · SN63"
+        # every kind gets a card — 23 Oct 20:03, SN39: "exchange" was missing here, the card crashed (KeyError), only the
+        # bots got the event
+        from snmon.buyback import Buyback
+        for how in ("add_stake_burn", "owner", "wallet", "buy+burn", "owner-funded", "exchange"):
+            await w.buyback(Buyback(63, 120.0, how, "5Buyer", "paid with 500.00 τ from a wallet with 68,153 transactions"), 1)
+            assert w.sent[-1]["embeds"][0]["title"] == "💰 BUYBACK · SN63"
+        assert any(f["name"] == "Money" and "68,153" in f["value"] for f in w.sent[-1]["embeds"][0]["fields"])
     asyncio.run(go())
 
 

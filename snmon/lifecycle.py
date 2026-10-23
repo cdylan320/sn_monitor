@@ -579,10 +579,14 @@ class SubnetWatch:
         info = self.meta.subnets.get(b.netuid)
         how = {"add_stake_burn": "the chain's buyback call (add_stake_burn): bought and burned at once",
                "owner": "the subnet owner's own coldkey", "wallet": "the team's buyback wallet (NEWS_BUYBACK_WALLETS)",
-               "buy+burn": "bought, then burned / recycled in the same block"}[b.how]
+               "buy+burn": "bought, then burned / recycled in the same block",
+               "owner-funded": "a new wallet paid with the owner's money",
+               "exchange": "a new, quiet wallet paid with money straight from an exchange / bridge"}.get(b.how, b.how)
         fields = [{"name": "Bought", "value": f"**{b.tao:,.2f} τ**", "inline": True}] + self._market(b.netuid, info)
         if b.coldkey:
             fields.append({"name": "Wallet", "value": acct(b.coldkey), "inline": True})
+        if b.detail:
+            fields.append({"name": "Money", "value": b.detail[:1000], "inline": False})
         await self._post(f"💰 **BUYBACK** · **{self._sn(b.netuid, info)}** — {b.text()}",
                          self._embed(b.netuid, info, f"💰 BUYBACK · SN{b.netuid}", f"How: {how}.", fields, GREEN, block))
 
