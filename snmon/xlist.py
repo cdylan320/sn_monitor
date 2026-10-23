@@ -32,7 +32,8 @@ API = "https://x.com/i/api/graphql/{}/{}"
 # the web app's own public token (in x.com's JavaScript) — the login itself is the cookies
 BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
-OPS = ("ListLatestTweetsTimeline", "ListAddMember", "CreateList", "Viewer")
+OPS = ("ListLatestTweetsTimeline", "ListAddMember", "CreateList", "Viewer", "SearchTimeline")
+POSTED = ("CreateList", "ListAddMember", "SearchTimeline")   # sent as POST (search answers a GET with 404)
 REDISCOVER_S = 1800        # read the request ids from x.com's scripts at most this often
 ADD_PACE_S = 2.0           # members are added one at a time, this far apart
 EPOCH_MS = 1288834974657   # X's ids start here: (id >> 22) + EPOCH_MS = when it was posted, in ms
@@ -54,7 +55,9 @@ def _user(t: dict) -> dict:
     core, legacy = u.get("core") or {}, u.get("legacy") or {}
     return {"screen_name": core.get("screen_name") or legacy.get("screen_name") or "",
             "name": core.get("name") or legacy.get("name") or "",
-            "avatar_url": (u.get("avatar") or {}).get("image_url") or legacy.get("profile_image_url_https")}
+            "avatar_url": (u.get("avatar") or {}).get("image_url") or legacy.get("profile_image_url_https"),
+            "followers": (u.get("relationship_counts") or {}).get("followers", legacy.get("followers_count")),
+            "joined": core.get("created_at") or legacy.get("created_at") or ""}
 
 
 def _text(t: dict) -> str:
@@ -140,6 +143,7 @@ class XList:
         self.who = ""                             # the account's @handle
         self.left: int | None = None              # list reads left in this 15-minute window, and when it resets
         self.reset = 0.0
+        self.limits: dict[str, tuple[int, float]] = {}   # request → (left in this window, when it resets)
         self.pause_until = 0.0
         self._discovered = 0.0
         try:
@@ -161,6 +165,17 @@ class XList:
 
     async def start(self) -> None:
         """Who the login is, the request ids, and the list (made if there is none). Raises XLoginError."""
+        await self.login()
+        if not self.list_id:
+            d = await self._call("CreateList", {"isPrivate": True, "name": "subnets", "description": ""})
+            self.list_id = ((d.get("data") or {}).get("list") or {}).get("id_str") or ""
+            if not self.list_id:
+                raise RuntimeError(f"the private list could not be made: {str(d.get('errors'))[:160]}")
+            self.members = {}
+            self._save()
+
+    async def login(self) -> None:
+        """Who the login is, and the request ids (read from x.com's scripts when missing). Raises XLoginError."""
         if self.session is None:
             # no cookie jar: the login goes only where it is written in (x.com), and X's own cookies are not mixed in
             self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10), cookie_jar=aiohttp.DummyCookieJar(),
@@ -172,13 +187,6 @@ class XList:
         self.who = (u.get("core") or u.get("legacy") or {}).get("screen_name") or ""
         if not self.who:
             raise XLoginError("X did not say who is logged in")
-        if not self.list_id:
-            d = await self._call("CreateList", {"isPrivate": True, "name": "subnets", "description": ""})
-            self.list_id = ((d.get("data") or {}).get("list") or {}).get("id_str") or ""
-            if not self.list_id:
-                raise RuntimeError(f"the private list could not be made: {str(d.get('errors'))[:160]}")
-            self.members = {}
-            self._save()
 
     async def _call(self, op: str, variables: dict) -> dict:
         """One request to X's web API. 401/403 → XLoginError; a 429 sets a pause; an unknown request id (X shipped a
@@ -189,15 +197,14 @@ class XList:
                 raise RuntimeError(f"{op}: no request id")
             feats = json.dumps({f: True for f in o.get("features", [])}, separators=(",", ":"))
             url = API.format(o["id"], op)
-            if op in ("CreateList", "ListAddMember"):
+            if op in POSTED:
                 req = self.session.post(url, headers=self._headers(),
                                         json={"variables": variables, "features": json.loads(feats), "queryId": o["id"]})
             else:
                 req = self.session.get(url, headers=self._headers(),
                                        params={"variables": json.dumps(variables, separators=(",", ":")), "features": feats})
             async with req as r:
-                if op == "ListLatestTweetsTimeline":
-                    self._limits(r)
+                self._limits(op, r)
                 new_ct0 = r.cookies.get("ct0")
                 if new_ct0 is not None and new_ct0.value and new_ct0.value != self.ct0:
                     self.ct0 = new_ct0.value          # X renewed the session's ct0
@@ -216,21 +223,34 @@ class XList:
             raise RuntimeError(f"X {op}: HTTP {r.status} {str(data.get('errors'))[:160]}")
         raise RuntimeError(f"X {op}: failed")
 
-    def _limits(self, r) -> None:
+    def _limits(self, op: str, r) -> None:
         try:
-            self.left = int(r.headers["x-rate-limit-remaining"])
-            self.reset = float(r.headers["x-rate-limit-reset"])
+            left, reset = int(r.headers["x-rate-limit-remaining"]), float(r.headers["x-rate-limit-reset"])
         except (KeyError, ValueError):
-            pass
+            return
+        self.limits[op] = (left, reset)
+        if op == "ListLatestTweetsTimeline":
+            self.left, self.reset = left, reset
 
-    def wait(self, every: float) -> float:
-        """Seconds until the next list read: `every`, or longer when that would use up X's allowance before it resets."""
+    def wait(self, every: float, op: str = "ListLatestTweetsTimeline") -> float:
+        """Seconds until the next `op` (a list read, a search): `every`, or longer when that would use up X's allowance
+        for it before the window resets."""
         now = time.time()
         if now < self.pause_until:
             return self.pause_until - now
-        if self.left is not None and self.reset > now:
-            return max(every, (self.reset - now) / max(self.left - 2, 1))
+        left, reset = self.limits.get(op, (None, 0.0))
+        if op == "ListLatestTweetsTimeline" and self.left is not None:
+            left, reset = self.left, self.reset
+        if left is not None and reset > now:
+            return max(every, (reset - now) / max(left - 2, 1))
         return every
+
+    async def search(self, query: str, count: int = 40) -> list[dict]:
+        """X's search, newest first ("Latest"). 23 Oct, measured: a post shows up ~12 s after it was posted (90% within
+        17 s); X allows 187 searches per 15 minutes."""
+        d = await self._call("SearchTimeline", {"rawQuery": query, "count": count, "querySource": "typed_query",
+                                                "product": "Latest"})
+        return timeline_items(d)
 
     async def timeline(self, count: int = 40) -> list[dict]:
         """The list's newest posts, newest first."""

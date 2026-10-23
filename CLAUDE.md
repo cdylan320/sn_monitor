@@ -39,6 +39,10 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
 - Subnet X accounts: fxtwitter (one account per request, each ~every 6 s). A private X list read with the user's X
   login (`snmon/xlist.py`, `NEWS_X_LIST`, account @cdylan321) exists but is OFF: X adds posts to a list 6-14 s late
   (median ~9.5 s); fxtwitter was first 10 of 12 times (~5 s), measured 21-22 Oct.
+- Subnet sales: X search with that login (`acquisition_loop`, every 6 s, ~12 s index lag): a post that says "acquired"
+  and names a subnet → AI check → 🤝 card, `acquisition` event (the bots trade it like a rename), the buyer's account
+  becomes the subnet's X account (kept until its identity changes on chain). An identity / owner change on chain also
+  re-finds the subnet's X account at once.
 - Discord: a user account's token (`NEWS_DISCORD_TOKEN`, now vic_x.; the first one was removed from the server on 21 Oct).
 - Every post is judged before it goes to the bots (`snmon/judge.py`): gpt-6.1-sol ×2 raced + gpt-6-luna, whose
   "important" goes out at once. const is never left to the AI: everything he writes in a subnet's Discord channel (by his

@@ -151,6 +151,14 @@ class SubnetAccounts:
     def recheck(self, n: int) -> None:
         self.forced.add(n)
 
+    def claim(self, n: int, handle: str, info) -> None:
+        """The buyer's X account, from its post announcing it acquired the subnet: watched at once, and kept until the
+        subnet's identity changes on chain (then its website says which account is the subnet's)."""
+        self.found[n] = {"handle": handle, "why": "acquisition", "candidate": handle, "src": "acquisition post",
+                         "url": info.url or "", "name": info.name, "at": time.time()}
+        self.forced.discard(n)
+        self.save()
+
     async def _candidate(self, session: aiohttp.ClientSession, sem: asyncio.Semaphore, info) -> tuple[str, str]:
         ident = info.identity or {}
         async with sem:
@@ -178,6 +186,10 @@ class SubnetAccounts:
             found = await asyncio.gather(*(self._candidate(session, sem, subnets[n]) for n in due))
             for n, (handle, src) in zip(due, found):
                 info = subnets[n]
+                old = self.found.get(n) or {}
+                if old.get("why") == "acquisition" and old.get("url") == (info.url or "") and old.get("name") == info.name:
+                    self.found[n] = {**old, "at": time.time()}   # the identity still shows the old team: the buyer stays
+                    continue
                 e = {"handle": "", "why": "", "candidate": handle, "src": src, "url": info.url or "",
                      "name": info.name, "at": time.time()}
                 if handle:

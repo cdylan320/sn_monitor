@@ -255,7 +255,12 @@ With an X login (`X_AUTH_TOKEN` / `X_CT0`, the x.com cookies), all those account
 private X list the monitor makes and keeps up to date (`data/x_list.json`), ~0.6 s for all of them, about every
 `NEWS_X_LIST_SECONDS` (2) — X allows 500 reads per 15 minutes. fxtwitter goes on next to it; whichever sees a post first
 sends it. X does not allow automated reading and may lock the account; if the login stops working, fxtwitter goes on
-alone (the 5-minute status line says "OFF: login refused"). **Off by default** (`NEWS_X_LIST=false`): measured 21-22 Oct,
+alone (the 5-minute status line says "OFF: login refused").
+**Subnet sales:** with the X login, X is also **searched** every `NEWS_X_SEARCH_SECONDS` (6) for a sale announced by its
+buyer from any account (23 Oct: @KommsApp "has officially acquired SN27!" at 12:00 — the pump from 12:09, the on-chain
+rename at 13:53). A post saying "acquired" or the like that names a subnet is checked by the AI; a real sale becomes a 🤝
+card, an `acquisition` event for the bots (traded like a rename) and the buyer's account becomes the subnet's X account
+(`NEWS_X_ACQUISITIONS`). The private list is **off by default** (`NEWS_X_LIST=false`): measured 21-22 Oct,
 X adds a post to a list 6-14 s late (median ~9.5 s), and fxtwitter had it first 10 of 12 times (~5 s).
 
 **const is always important.** Everything const writes in a subnet's Discord channel is news — even "Nice work" or only

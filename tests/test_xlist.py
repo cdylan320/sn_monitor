@@ -199,6 +199,127 @@ def test_the_list_timing_says_how_late_posts_show_up_in_the_list_and_on_fxtwitte
     assert len(m.xl_timing) == 2                                    # each post once
 
 
+
+KOMMS = ("Komms has officially acquired SN27!\n\nWe are building the best decentralised workspace & community app and "
+         "this is a huge step in achieving this.\n\n#Bittensor #Kaspa #Komms")
+
+
+def sale_monitor():
+    from snmon.meta import SubnetInfo
+
+    class Meta:
+        subnets = {27: SubnetInfo(27, "Orion", "", 6500.0, 1, None, None), 54: SubnetInfo(54, "Yanez", "", 5000.0, 1, None, None)}
+
+        def info(self, n):
+            return self.subnets.get(n)
+    m = NewsMonitor("x", None, Meta(), price_now=lambda n: 2_258_000, change=lambda n, b: 0.0)
+    m._save_state = lambda: None
+    m.dry_run = True
+    return m
+
+
+def test_a_subnet_sale_on_x_becomes_a_card_an_acquisition_for_the_bots_and_the_buyers_account_is_the_subnets():
+    # 23 Oct: @KommsApp "has officially acquired SN27!" at 12:00:01 — the pump from 12:09, the on-chain rename at 13:53
+    async def go():
+        m = sale_monitor()
+        sent, cards, asked, claims = [], [], [], []
+
+        class Feed:
+            def publish(self, ev):
+                sent.append(ev)
+                return 1
+
+        class Judge:
+            async def acquisition(self, author, text):
+                asked.append(author)
+                yes = author == "KommsApp"
+                return {"acquisition": yes, "netuid": 27 if yes else 0, "acquirer": "Komms" if yes else "",
+                        "reason": "Komms announces it acquired SN27" if yes else "a rumour"}
+
+        class Accounts:
+            def claim(self, n, handle, info):
+                claims.append((n, handle))
+
+        async def send(payload, netuid, p0):
+            cards.append(payload)
+        m.news_feed, m.judge, m._send = Feed(), Judge(), send
+        komms = post(2113571136776839182, author="KommsApp", age=14.0)
+        komms["text"] = KOMMS
+        await m._acquisition_check(komms, Accounts())
+        ev = sent[-1]
+        assert ev["kind"] == "acquisition" and ev["netuid"] == 27 and ev["important"] is True and ev["category"] == "acquisition"
+        assert ev["who"] == "KommsApp" and claims == [(27, "KommsApp")]
+        assert "🤝 **SN27 Orion acquired** by Komms · " in cards[-1]["content"]
+        assert "2113571136776839182" in m._x_sub                               # a Discord share of it is not reported again
+        await m._acquisition_check(dict(komms, id="2113571136776839183"), Accounts())   # its next post about it: once a day
+        assert len(sent) == 1
+        rumour = post(2113571136776839190, author="random", age=5.0, text="Rumour: someone acquired SN27?? #bittensor")
+        no_number = post(2113571136776839191, author="x", age=5.0, text="Someone acquired a subnet today #bittensor")
+        old = post(2113571136776839192, author="KommsApp2", age=900.0, text=KOMMS)
+        for t in (rumour, no_number, old):
+            await m._acquisition_check(t, Accounts())
+        assert asked == ["KommsApp", "random"] and len(sent) == 1              # no number / too old: not even asked
+    asyncio.run(go())
+
+
+def test_the_sale_search_records_its_first_answer_and_checks_what_is_new_after():
+    async def go():
+        m = sale_monitor()
+        checked = []
+
+        async def check(t, accounts):
+            checked.append(t["id"])
+        m._acquisition_check = check
+
+        class Search:
+            who, reads = "me", 0
+
+            async def login(self):
+                pass
+
+            async def search(self, query):
+                self.reads += 1
+                if self.reads == 1:
+                    return [post(1, author="a")]
+                if self.reads == 2:
+                    return [post(3, author="c"), post(2, author="b", reposted_by={"screen_name": "z"}), post(1, author="a")]
+                raise XLoginError("X refused the login (HTTP 401)")
+
+            def wait(self, every, op):
+                return 0
+        await asyncio.wait_for(m.acquisition_loop(Search(), None, "q"), 2)
+        await asyncio.sleep(0)
+        assert checked == ["3"] and m.stats["xa_polls"] == 2 and m.stats["xa_off"] == 1    # a repost is not a claim
+    asyncio.run(go())
+
+
+def test_the_buyers_account_stays_the_subnets_until_its_identity_changes_on_chain():
+    import tempfile
+    from pathlib import Path
+    from snmon import xsubnets
+    from snmon.meta import SubnetInfo
+    xsubnets.CACHE_FILE = Path(tempfile.mkdtemp()) / "x.json"
+    acc = xsubnets.SubnetAccounts()
+    orion = SubnetInfo(27, "Orion", "", 6500.0, 1, None, None)
+    acc.claim(27, "KommsApp", orion)
+    assert acc.by_netuid() == {27: "KommsApp"}
+
+    async def go():
+        async def candidate(session, sem, info):
+            return ("SILX_Labs" if info.name == "Orion" else "KommsApp"), "website"
+        acc._candidate = candidate
+
+        async def profile(session, handle):
+            return {"name": handle, "description": "subnet 27"}
+        acc.found[27]["at"] = 0                                                 # the daily look is due
+        await acc.refresh(None, {27: orion}, profile=profile)
+        assert acc.by_netuid() == {27: "KommsApp"}                              # the old team's site still says Orion
+        komms = SubnetInfo(27, "Komms", "", 6500.0, 1, "https://komms.app", None)
+        await acc.refresh(None, {27: komms}, profile=profile)                   # 13:53: renamed, its site komms.app
+        assert acc.by_netuid() == {27: "KommsApp"} and acc.found[27]["why"] != "acquisition"
+    asyncio.run(go())
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

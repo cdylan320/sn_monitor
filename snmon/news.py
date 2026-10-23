@@ -84,6 +84,11 @@ ANNOUNCE, XPOST, TEAM = "announcement", "x_post", "team"
 X_TIMELINE = "https://api.fxtwitter.com/2/profile/{}/statuses"
 X_SUBNET_MAX_AGE_S = 600   # a subnet's post older than this when first seen (posted while the monitor was down) is not news
 X_SUBNET_RETRIES = 2       # a failed look at a subnet's account is tried again at once, this many times
+# X search for a subnet sold (any account; the user's X login): words that say it, and the subnet's number in the post
+ACQ_QUERY = ('(acquired OR acquires OR acquisition OR "new owner" OR "new owners" OR "took over" OR "taken over" '
+             'OR "new home") (bittensor OR subnet OR tao)')
+ACQ_WORDS = re.compile(r"\b(acquir\w*|acquisition|new owners?|took over|taken over|taking over|bought|purchas\w*|new home)\b", re.I)
+SUBNET_NUM_RE = re.compile(r"\b(?:sn|subnet|netuid)\s?#?(\d{1,3})\b", re.I)
 LABEL = {ANNOUNCE: "📢 Announcement", XPOST: "🐦 X post", TEAM: "📰 Team update"}
 COLOR = {ANNOUNCE: 0xF59E0B, XPOST: 0x1D9BF0, TEAM: 0x8B5CF6}
 
@@ -138,6 +143,7 @@ class NewsMonitor:
         self._x_pause_until = 0.0                # fxtwitter answered 429: no X request before this (every X loop)
         self._x_discovery: asyncio.Task | None = None
         self._x_accounts = None                  # the subnets' X accounts (xsubnets.SubnetAccounts), once watched
+        self._acquired: dict[str, float] = {}    # "netuid:buyer" → when its acquisition was reported
         self._x_refresh_at = 0.0                 # when they are looked up again (hourly, or at once after a change)
         self._recent: dict[str, list[tuple[float, str, bool]]] = {}  # channel → (time, author, asked a question)
         self.stats: dict[str, int] = {}
@@ -867,6 +873,90 @@ class NewsMonitor:
                 if syncing is not None:
                     syncing.cancel()
 
+    async def acquisition_loop(self, x, accounts, query: str, every: float = 6.0) -> None:
+        """A subnet sold, announced on X by its buyer — from any account, found by X search (with the user's X login).
+        23 Oct: @KommsApp posted "Komms has officially acquired SN27!" at 12:00:01; bots bought from 12:04, the price was
+        +24% by 12:23; the monitor saw it only when it was shared in Discord at 12:22, the on-chain rename came at 13:53.
+        Search shows a post ~12 s after it is posted (90% within 17 s); X allows 187 searches per 15 minutes. A post that
+        says "acquired" (or the like) and names a subnet ("SN27", "subnet 27") is checked by the AI; a real acquisition
+        becomes a card, an "acquisition" event for the bots (traded like a rename), and the buyer's account becomes the
+        subnet's X account at once."""
+        from .xlist import XLoginError
+        try:
+            await x.login()
+        except Exception as e:
+            log.error("X search for subnet sales not started: %s", e)
+            return
+        print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S')} ── X search for subnet sales: as @{x.who} · every ~{every:g} s"))
+        seen = self._x_ids.setdefault("__acquisitions__", [])
+        first = not seen                         # the very first search only records what is there
+        while True:
+            began = time.monotonic()
+            try:
+                items = await x.search(query)
+            except asyncio.CancelledError:
+                raise
+            except XLoginError as e:
+                self.stats["xa_off"] = 1
+                log.error("X search: %s — subnet sales are no longer searched", e)
+                return
+            except Exception as e:
+                self.stats["xa_fail"] = self.stats.get("xa_fail", 0) + 1
+                log.debug("X search failed: %s", e)
+                items = None
+            if items is not None:
+                self.stats["xa_polls"] = self.stats.get("xa_polls", 0) + 1
+                known = set(seen)
+                fresh = [t for t in items if str(t.get("id")) not in known]
+                seen.extend(str(t.get("id")) for t in fresh)
+                del seen[:-500]
+                if fresh:
+                    self._save_state()
+                if not first:
+                    for t in sorted(fresh, key=lambda t: int(t["id"])):
+                        if not t.get("reposted_by"):
+                            asyncio.create_task(self._acquisition_check(t, accounts))
+                first = False
+            await asyncio.sleep(max(0.0, x.wait(every, "SearchTimeline") - (time.monotonic() - began)))
+
+    async def _acquisition_check(self, t: dict, accounts) -> None:
+        try:
+            text = t.get("text") or ""                # its own words: a quote of someone else's news is not its claim
+            if time.time() - float(t.get("created_timestamp") or 0) > X_SUBNET_MAX_AGE_S or not ACQ_WORDS.search(text):
+                return
+            nums = {int(m) for m in SUBNET_NUM_RE.findall(text)} & (set(self.meta.subnets) - {0})
+            if not nums or self.judge is None:
+                return
+            author = (t.get("author") or {}).get("screen_name") or ""
+            if all(time.time() - self._acquired.get(f"{x}:{author.lower()}", 0) < 24 * 3600 for x in nums):
+                return                            # the buyer's next post about the same sale: already reported today
+            self.stats["xa_checked"] = self.stats.get("xa_checked", 0) + 1
+            a = await self.judge.acquisition(author, text)
+            n = int((a or {}).get("netuid") or 0)
+            if not a or not a.get("acquisition") or n not in nums:
+                print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S')}    ↳ X search: @{author} on "
+                              f"{', '.join(f'SN{x}' for x in sorted(nums))} — not a sale ({(a or {}).get('reason') or 'no AI answer'})"))
+                return
+            key = f"{n}:{author.lower()}"
+            if time.time() - self._acquired.get(key, 0) < 24 * 3600:
+                return                            # the same buyer's next post about it: reported once a day
+            self._acquired[key] = time.time()
+            self.stats["xa_found"] = self.stats.get("xa_found", 0) + 1
+            info = self.meta.info(n)
+            buyer = a.get("acquirer") or f"@{author}"
+            if accounts is not None:
+                accounts.claim(n, author, info)   # its posts are the subnet's from now on (always important)
+            self._x_sub[str(t.get("id"))] = time.time()   # a later Discord share of it is not reported again
+            verdict = Verdict(True, "acquisition", f"{buyer} acquired SN{n} — {a.get('reason') or ''}".strip(" —"), "ai")
+            print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S')} ── 🤝 SN{n} acquired by {buyer} (@{author}) · X post "
+                          f"{time.time() - float(t['created_timestamp']):.0f} s old · @{author} is SN{n}'s X account now"))
+            await self._post_x(t, author, feed_kind="acquisition", netuid=n, verdict=verdict,
+                               headline=f"🤝 **SN{n} {info.name or ''} acquired** by {buyer} · ")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("acquisition check of an X post failed")
+
     def _xl_timing(self, items: list[dict], in_list: set[str]) -> None:
         """How many seconds after posting a post shows up in the X list, next to fxtwitter's (when it saw it first) —
         21-22 Oct: the list never saw a post first (5 of 5 by fxtwitter), so it is measured on every post and reply."""
@@ -909,9 +999,10 @@ class NewsMonitor:
         return subnet_named(text, {n: i.name for n, i in self.meta.subnets.items() if n})
 
     async def _post_x(self, t: dict, handle: str, parent: dict | None = None, feed_kind: str = "x_account",
-                      netuid: int | None = None) -> None:
+                      netuid: int | None = None, verdict=None, headline: str = "") -> None:
         """`parent` is the tweet he replied to (when the timeline carries it) — shown as context. A subnet's own account
-        (`feed_kind` "x_subnet") names its subnet in `netuid`; any other account's subnet is read from the tweet."""
+        (`feed_kind` "x_subnet") and an acquisition ("acquisition") name the subnet in `netuid`; any other account's subnet
+        is read from the tweet. `verdict` given = no news check; `headline` goes in front of the card's first line."""
         a = t.get("author") or {}
         rb = t.get("reposted_by") or {}
         me = rb if rb else a
@@ -938,8 +1029,10 @@ class NewsMonitor:
             pa = parent.get("author") or {}
             desc += (f"\n\n**In reply to {pa.get('name', '')} (@{pa.get('screen_name', '')}):**\n> "
                      + parent["text"].replace("\n", "\n> ")[:600])
-        n = netuid if feed_kind == "x_subnet" else self._x_subnet(t)
-        if handle.lower() in self.const_x:
+        n = netuid if feed_kind in ("x_subnet", "acquisition") else self._x_subnet(t)
+        if verdict is not None:
+            pass
+        elif handle.lower() in self.const_x:
             verdict = const_verdict(f"const {kind} on X")
         elif ((quote.get("author") or {}).get("screen_name") or "").lower() in self.const_x:
             verdict = const_verdict("it quotes const")
@@ -989,7 +1082,7 @@ class NewsMonitor:
         elif created:
             embed["timestamp"] = created.isoformat()
         self._x_seen[str(t.get("id"))] = time.time()  # a Discord share of the same tweet won't repeat it
-        payload = {"content": alerts.content([f"{emoji} **{me.get('name') or handle}** (@{me.get('screen_name') or handle}) "
+        payload = {"content": alerts.content([f"{headline}{emoji} **{me.get('name') or handle}** (@{me.get('screen_name') or handle}) "
                                               f"{kind}{sub}: {preview}"]),
                    "embeds": [embed], "allowed_mentions": {"parse": []}}
         await self._send(payload, n, p0)

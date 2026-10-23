@@ -28,7 +28,7 @@ from .mempool import Mempool
 from .bars import BUCKET, Bars
 from .meta import Meta, Trade
 from .feed import NewsFeed
-from .news import NewsMonitor
+from .news import ACQ_QUERY, NewsMonitor
 from .rpc import Rpc
 from .signals import Signals, parse_trigger
 from .trend import TrendBoard, TrendMonitor, parse_timeframes
@@ -493,10 +493,14 @@ class App:
             accounts = SubnetAccounts(self.cfg.news_x_subnet_handles, skip=set(self.cfg.news_x_accounts))
             asyncio.create_task(self.news.subnet_x_loop(accounts, self.cfg.news_x_subnet_rate))
             subnet_x = f" + every subnet's own account ({len(accounts.by_netuid())} known, more being looked up)"
-            if self.cfg.news_x_list and self.cfg.x_auth_token and self.cfg.x_ct0:
-                xlist = XList(self.cfg.x_auth_token, self.cfg.x_ct0)
+            xlist = XList(self.cfg.x_auth_token, self.cfg.x_ct0) if self.cfg.x_auth_token and self.cfg.x_ct0 else None
+            if xlist is not None and self.cfg.news_x_list:
                 asyncio.create_task(self.news.subnet_x_list_loop(xlist, accounts, self.cfg.news_x_list_seconds))
                 subnet_x += " (also in one private X list)"
+            if xlist is not None and self.cfg.news_x_acquisitions:
+                asyncio.create_task(self.news.acquisition_loop(xlist, accounts, self.cfg.news_x_acquisition_query or ACQ_QUERY,
+                                                               self.cfg.news_x_search_seconds))
+                subnet_x += " + X search for subnet sales"
         why = await self._news_discord()
         x = " · X: " + ", ".join("@" + h for h in self.cfg.news_x_accounts) + subnet_x
         if why:
@@ -755,7 +759,11 @@ class App:
                                 + (" (OFF: login refused)" if self.news.stats.get("xl_off") else "")
                                 + f", first seen by: list {self.news.stats.get('xl_first', 0)}, fxtwitter {self.news.stats.get('xs_first', 0)}"
                                 + self._xl_timing_text()
-                                if self.cfg.news_x_list and self.cfg.x_auth_token else "") + ")"
+                                if self.cfg.news_x_list and self.cfg.x_auth_token else "")
+                             + (f", sale search {self.news.stats.get('xa_polls', 0)} ok / {self.news.stats.get('xa_fail', 0)} failed"
+                                f" ({self.news.stats.get('xa_checked', 0)} checked, {self.news.stats.get('xa_found', 0)} sales)"
+                                + (" (OFF: login refused)" if self.news.stats.get("xa_off") else "")
+                                if self.cfg.news_x_acquisitions and self.cfg.x_auth_token else "") + ")"
                              if self.news else "")))
 
     async def _startup_message(self) -> None:

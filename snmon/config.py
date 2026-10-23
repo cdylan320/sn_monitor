@@ -136,6 +136,9 @@ class Config:
     news_x_subnet_handles: dict   # netuid → handle added / corrected by hand ("" = watch none)
     news_x_list: bool             # … also all of them in one request: a private X list read with the X login below
     news_x_list_seconds: float    # … read about this often (X allows 500 reads per 15 minutes)
+    news_x_acquisitions: bool     # search X (with the X login) for a subnet's sale announced by its buyer, any account
+    news_x_search_seconds: float  # … this often (X allows 187 searches per 15 minutes)
+    news_x_acquisition_query: str # … with this search ('' = news.ACQ_QUERY)
     x_auth_token: str             # the X login: the auth_token and ct0 cookies of x.com (secret)
     x_ct0: str
     news_ai_model: str            # the AI model that judges if a post is important news ('' = the provider's default)
@@ -217,6 +220,9 @@ def load() -> Config:
         news_x_subnet_handles=_handles("NEWS_X_SUBNET_HANDLES"),
         news_x_list=_bool("NEWS_X_LIST", False),
         news_x_list_seconds=_float("NEWS_X_LIST_SECONDS", 2.0),
+        news_x_acquisitions=_bool("NEWS_X_ACQUISITIONS", True),
+        news_x_search_seconds=_float("NEWS_X_SEARCH_SECONDS", 6.0),
+        news_x_acquisition_query=(os.getenv("NEWS_X_ACQUISITION_QUERY") or "").strip(),
         x_auth_token=(os.getenv("X_AUTH_TOKEN") or "").strip().strip('"'),
         x_ct0=(os.getenv("X_CT0") or "").strip().strip('"'),
         news_ai_model=(os.getenv("NEWS_AI_MODEL") or "").strip(),   # empty: the provider's default (judge.DEFAULT_MODEL)

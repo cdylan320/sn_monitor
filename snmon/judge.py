@@ -67,6 +67,26 @@ SCHEMA = {
     "additionalProperties": False,
 }
 
+# a subnet sold: found by X search from any account (23 Oct: @KommsApp "has officially acquired SN27!" at 12:00, the pump
+# at 12:09, the on-chain rename only at 13:53) — asked only about posts that name a subnet and say "acquired" or the like
+ACQ_SYSTEM = """You read one X post. Decide whether it OFFICIALLY ANNOUNCES that a Bittensor subnet (named by its number: \
+"SN27", "subnet 27", "netuid 27") now has a new owner — the author's own team or company acquired / bought / took over \
+that subnet. NOT an acquisition: rumours, questions, jokes, wishes ("someone should buy SN27"), congratulations or \
+commentary by others, an acquisition of something else (a company, a domain), a subnet buying a product, or a subnet \
+registering a new slot. Answer the subnet's number (0 when there is none or it is not an acquisition), the new owner's \
+name, and a reason of at most 12 words."""
+ACQ_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "acquisition": {"type": "boolean"},
+        "netuid": {"type": "integer"},
+        "acquirer": {"type": "string"},
+        "reason": {"type": "string"},
+    },
+    "required": ["acquisition", "netuid", "acquirer", "reason"],
+    "additionalProperties": False,
+}
+
 # keyword rules: the fallback when Claude is not set up or does not answer in time
 RULES = [
     ("launch", r"\b(launch(ed|es|ing)?|released?|is (now )?live|now live|went live|live now|mainnet|v\d+(\.\d+)* (is )?(out|live)|introducing|now available|shipped)\b"),
@@ -283,6 +303,39 @@ class NewsJudge:
         v = self._verdict(data["choices"][0]["message"]["content"])
         v.model = model
         return v
+
+    async def acquisition(self, author: str, text: str) -> dict | None:
+        """Does this X post announce that the author's team acquired a subnet? → {"acquisition", "netuid", "acquirer",
+        "reason"}, or None when no AI answered (OpenRouter only; the fast model when there is one: ~1.3 s)."""
+        if self.provider != "openrouter":
+            return None
+        if self.session is None:
+            import aiohttp
+            self.session = aiohttp.ClientSession()
+        model = self.fast_model or self.model
+        body = {"model": model,
+                "messages": [{"role": "system", "content": ACQ_SYSTEM},
+                             {"role": "user", "content": f"Author: @{author}\n\nPost:\n{text[:3000]}"}],
+                "response_format": {"type": "json_schema",
+                                    "json_schema": {"name": "acquisition", "strict": True, "schema": ACQ_SCHEMA}},
+                "max_tokens": 1024}
+        if model == self.fast_model:
+            body["reasoning"], body["provider"] = {"enabled": False}, {"sort": "latency"}
+        elif model.startswith("openai/"):
+            body["reasoning"] = {"effort": "low"}
+        try:
+            async with self.session.post(OPENROUTER_URL, json=body,
+                                         headers={"Authorization": f"Bearer {self.openrouter_key}"}) as r:
+                data = await r.json(content_type=None)
+                if r.status != 200 or "error" in data:
+                    raise RuntimeError(f"OpenRouter {r.status}: {str(data.get('error'))[:120]}")
+            self.stats["cost"] += float((data.get("usage") or {}).get("cost") or 0)
+            return json.loads(data["choices"][0]["message"]["content"])
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning("acquisition check failed: %s: %s", type(e).__name__, str(e)[:120])
+            return None
 
     async def _ask(self, subnet: str, text: str, tweet_text: str, tweet_age_s: float | None) -> Verdict:
         kwargs = {}
