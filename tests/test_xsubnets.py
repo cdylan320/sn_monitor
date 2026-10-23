@@ -264,6 +264,16 @@ def test_a_failed_look_at_a_subnet_account_is_tried_again_at_once():
     asyncio.run(go())
 
 
+
+def test_a_subnet_whose_owner_changed_is_looked_at_again_even_with_the_same_website():
+    acc = xsubnets.SubnetAccounts()
+    acc.found = {85: {"handle": "vidaio_", "why": "website", "url": SUBNETS[85].url or "", "name": SUBNETS[85].name,
+                      "at": time.time()}}
+    assert 85 not in acc.due({85: SUBNETS[85]})
+    acc.recheck(85)
+    assert 85 in acc.due({85: SUBNETS[85]})
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

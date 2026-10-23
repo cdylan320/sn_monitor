@@ -467,6 +467,21 @@ def test_a_post_by_the_subnets_own_x_account_is_always_important_without_asking_
     asyncio.run(go())
 
 
+
+def test_a_changed_subnet_gets_its_x_account_looked_up_at_once():
+    m = nm()
+    m._x_refresh_at = time.time() + 3000                                    # the hourly round is far away
+    m.x_accounts_changed(27, "identity changed")                            # not watching X yet: nothing to do
+    rechecked = []
+
+    class Accounts:
+        def recheck(self, n):
+            rechecked.append(n)
+    m._x_accounts = Accounts()
+    m.x_accounts_changed(27, "identity changed")
+    assert rechecked == [27] and m._x_refresh_at == 0.0
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

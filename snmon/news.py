@@ -137,6 +137,8 @@ class NewsMonitor:
         self.xl_timing: list[tuple[float, float | None]] = []   # (s after posting it was in the list, … on fxtwitter if first)
         self._x_pause_until = 0.0                # fxtwitter answered 429: no X request before this (every X loop)
         self._x_discovery: asyncio.Task | None = None
+        self._x_accounts = None                  # the subnets' X accounts (xsubnets.SubnetAccounts), once watched
+        self._x_refresh_at = 0.0                 # when they are looked up again (hourly, or at once after a change)
         self._recent: dict[str, list[tuple[float, str, bool]]] = {}  # channel → (time, author, asked a question)
         self.stats: dict[str, int] = {}
         self.posted = 0
@@ -688,14 +690,17 @@ class NewsMonitor:
             await self._subnet_x_poll_loop(session, accounts, rate)
 
     async def _subnet_x_poll_loop(self, session, accounts, rate: float, refresh_every: float = 3600.0) -> None:
-        next_refresh, turn = 0.0, 0
+        turn = 0
+        self._x_accounts = accounts
         looks: dict[str, asyncio.Task] = {}
         try:
             while True:
-                if time.time() >= next_refresh and self.meta.subnets:
-                    next_refresh = time.time() + refresh_every
+                if time.time() >= self._x_refresh_at and self.meta.subnets:
                     if self._x_discovery is None or self._x_discovery.done():
+                        self._x_refresh_at = time.time() + refresh_every
                         self._x_discovery = asyncio.create_task(self._x_discover(session, accounts))
+                    else:
+                        self._x_refresh_at = time.time() + 5     # a lookup is running: the next one right after it
                 watch = accounts.accounts()
                 order = sorted(watch)
                 if order and time.time() >= self._x_pause_until:
@@ -710,6 +715,15 @@ class NewsMonitor:
                 t.cancel()
             if self._x_discovery is not None:
                 self._x_discovery.cancel()
+
+    def x_accounts_changed(self, n: int, what: str) -> None:
+        """A subnet's identity or owner changed (lifecycle): look for its X account again now, not in the hourly round —
+        a sold subnet's new owner posts from a new account (23 Oct: SN27 → Komms; renamed 13:53, @KommsApp found 14:00)."""
+        if self._x_accounts is None:
+            return
+        self._x_accounts.recheck(n)
+        self._x_refresh_at = 0.0
+        print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S')} ── X account of SN{n}: looked up again now ({what})"))
 
     async def _x_discover(self, session, accounts) -> None:
         try:

@@ -66,6 +66,8 @@ class SubnetWatch:
         self.meta = meta
         self.discord = discord
         self.refresh = refresh          # async: reload subnet metadata (and reset history of re-registered slots)
+        self.on_change = None           # (netuid, what): its identity or owner changed — the news monitor looks for its
+                                        # X account again at once (23 Oct: SN27 sold to Komms, renamed at 13:53)
         self.path = path
         self.dry_run = dry_run
         self.known: dict[int, SubnetInfo] = {}
@@ -287,6 +289,7 @@ class SubnetWatch:
             if n and ((was and was.owner == old_ck) or info.owner == new_ck and was and was.owner != new_ck):
                 hit = True
                 self._mark("owner", n)
+                self._changed(n, "owner coldkey swapped")
                 await self._post(f"🔑 **{self._sn(n, info)}** — owner coldkey **swapped**: {fmt.short(old_ck)} → {fmt.short(new_ck)}",
                                  self._embed(n, info, f"🔑 OWNER COLDKEY SWAPPED · SN{n}",
                                              "The subnet's owner coldkey was swapped to a new address.",
@@ -295,6 +298,13 @@ class SubnetWatch:
                                              AMBER, block))
         if not hit:   # any other wallet's coldkey swap: not a subnet sale, so no alert — but say so in the log
             log.info("coldkey swap in #%d is not a subnet owner's (no alert): %s → %s", block, fmt.short(old_ck), fmt.short(new_ck))
+
+    def _changed(self, n: int, what: str) -> None:
+        if self.on_change is not None:
+            try:
+                self.on_change(n, what)
+            except Exception:
+                log.exception("telling about SN%d's change failed", n)
 
     def _swap_done(self, owner: str) -> None:
         if self.swaps.pop(owner, None) is not None:
@@ -325,6 +335,7 @@ class SubnetWatch:
         if self._seen("owner", n):
             return
         self._mark("owner", n)
+        self._changed(n, "owner changed")
         await self._post(f"👑 **{self._sn(n, info)}** — **owner changed**: {fmt.short(was)} → {fmt.short(now)}",
                          self._embed(n, info, f"👑 OWNER CHANGED · SN{n}", how,
                                      [{"name": "Old owner", "value": acct(was), "inline": True},
@@ -363,6 +374,7 @@ class SubnetWatch:
         if not changes:
             return
         self._mark("identity", sig)
+        self._changed(n, "identity changed")
         renamed = next((c for c in changes if c[0] == "Name"), None)
         diff = "\n".join(f"- {label}: {a_[:120] or '(empty)'}\n+ {label}: {b_[:120] or '(empty)'}" for label, a_, b_ in changes[:6])
         head = (f"✏️ **SN{n}** renamed: **“{renamed[1] or '(none)'}” → “{renamed[2] or '(none)'}”**" if renamed

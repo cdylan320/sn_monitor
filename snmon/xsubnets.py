@@ -11,7 +11,8 @@ its bio names it ("SN85" / "subnet 85"), or its name / handle contains the subne
 NEWS_X_SUBNET_HANDLES adds or corrects any by hand ("72:NATIXNetwork", "21:-" = none).
 
 Kept in data/x_subnets.json and looked at again every DISCOVER_HOURS — sooner for a new subnet, a subnet whose website
-or name changed, or a profile that could not be read.
+or name changed, or a profile that could not be read; at once (not in the hourly round) when a subnet's identity or owner
+changes on chain — a sold subnet's new owner posts from a new account (23 Oct: SN27 → Komms, @KommsApp).
 """
 from __future__ import annotations
 
@@ -103,6 +104,7 @@ class SubnetAccounts:
         self.overrides = overrides or {}        # netuid → handle ("" = none), from NEWS_X_SUBNET_HANDLES
         self.skip = frozenset(s.lower() for s in (skip or ()))   # accounts watched for themselves (const)
         self.found: dict[int, dict] = {}        # netuid → {"handle", "why", "candidate", "src", "url", "name", "at"}
+        self.forced: set[int] = set()           # looked at again on the next refresh, whatever changed (a new owner)
         self.busy = False
         try:
             self.found = {int(n): e for n, e in json.loads(CACHE_FILE.read_text()).get("found", {}).items()}
@@ -141,9 +143,13 @@ class SubnetAccounts:
                 continue
             e = self.found.get(n)
             wait = (RETRY_HOURS if e and e.get("why") == "unreadable" else DISCOVER_HOURS) * 3600
-            if e is None or e.get("url") != (info.url or "") or e.get("name") != info.name or now - e.get("at", 0) >= wait:
+            if (e is None or n in self.forced or e.get("url") != (info.url or "") or e.get("name") != info.name
+                    or now - e.get("at", 0) >= wait):
                 out.append(n)
         return out
+
+    def recheck(self, n: int) -> None:
+        self.forced.add(n)
 
     async def _candidate(self, session: aiohttp.ClientSession, sem: asyncio.Semaphore, info) -> tuple[str, str]:
         ident = info.identity or {}
@@ -183,6 +189,7 @@ class SubnetAccounts:
                         e.update(handle=handle if why else "", why=why or "not the subnet's")
                     await asyncio.sleep(PROFILE_PACE_S)
                 self.found[n] = e
+            self.forced -= set(due)
             for n in [n for n in self.found if n not in subnets]:
                 del self.found[n]
             if due:

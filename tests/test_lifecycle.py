@@ -220,6 +220,24 @@ def test_the_chain_is_the_source_of_truth_for_pending_announcements():
     asyncio.run(go())
 
 
+
+def test_a_new_identity_or_owner_tells_the_news_monitor_to_look_for_the_x_account_again():
+    # 23 Oct: SN27 sold to Komms, renamed at 13:53 — its new X account (@KommsApp) was found only in the hourly round
+    async def go():
+        w, meta = watch(BASE)
+        told = []
+        w.on_change = lambda n, what: told.append((n, what))
+        meta.next = {**BASE, 64: sub(64, "Komms", owner="5Chutes", url="https://komms.app")}
+        await w.on_events(100, [("SubnetIdentitySet", 64)])
+        assert told == [(64, "identity changed")]
+        await w.on_events(101, [("SubnetIdentitySet", 64)])                           # set again, same values: nothing
+        assert told == [(64, "identity changed")]
+        meta.next = {**meta.subnets, 116: sub(116, "for sale", owner="5Buyer")}
+        await w.on_events(102, [("ColdkeySwapped", (OLD_OWNER, "5Buyer"))])
+        assert (116, "owner coldkey swapped") in told
+    asyncio.run(go())
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

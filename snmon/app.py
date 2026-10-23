@@ -92,6 +92,8 @@ class App:
             self.news.const_ids = set(cfg.news_const_discord_ids)
             self.news.const_x = {h.lower() for h in cfg.news_x_accounts}
             self.news.owner_important = cfg.news_x_subnet_important
+            if self.subnets is not None:     # a subnet's new identity / owner: its X account is looked up again at once
+                self.subnets.on_change = self.news.x_accounts_changed
         self.trend: TrendMonitor | None = None
         if cfg.trend_webhook_url:
             self.bars = Bars(ROOT / "data" / "bars.db")
