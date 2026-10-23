@@ -273,8 +273,8 @@ days in `data/transfers.db`). It becomes a 💰 card and a `buyback` event; the 
 **const is always important.** Everything const writes in a subnet's Discord channel is news — even "Nice work" or only
 an image — matched by his user id (`NEWS_CONST_DISCORD_IDS`), never by name. That, his X posts / reposts / replies, and a
 subnet quoting or sharing his X post are always judged important ("News check (const)"), without asking the AI.
-So is a post or quote by a **subnet's own X account** — its owner speaking (`NEWS_X_SUBNET_IMPORTANT`, "News check (the
-subnet's own account)").
+A post by a **subnet's own X account** (its owner) is judged by the AI like any other post; `NEWS_X_SUBNET_IMPORTANT=true`
+makes it always important instead ("News check (the subnet's own account)") — off since 23 Oct.
 
 **News check.** Every post about a subnet is judged before it goes to the bots: is it *important* news — a product
 launch, big progress, funding or a new investor, revenue / customers / contracts, a notable partnership, a listing, a

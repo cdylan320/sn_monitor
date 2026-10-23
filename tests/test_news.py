@@ -427,11 +427,13 @@ def test_consts_posts_are_always_important_without_asking_the_ai_and_go_to_the_b
 
 
 
-def test_a_post_by_the_subnets_own_x_account_is_always_important_without_asking_the_ai():
+def test_a_post_by_the_subnets_own_x_account_is_judged_by_the_ai_unless_the_owner_rule_is_on():
     # 22 Oct: @TargonCompute (SN4) quoted a post about exploits — judged "not important"; then 52, 100, 50 and 200 τ
-    # were staked into SN4 in the next blocks
+    # were staked into SN4 → the owner's posts were made always important; 23 Oct the user turned that off: the AI judges
     async def go():
         m = nm()
+        assert m.owner_important is False                  # the default: NEWS_X_SUBNET_IMPORTANT=false
+        m.owner_important = True
         m.dry_run = True
         sent, cards = [], []
 
@@ -458,7 +460,7 @@ def test_a_post_by_the_subnets_own_x_account_is_always_important_without_asking_
         assert ev["kind"] == "x_subnet" and ev["important"] is True and ev["category"] == "owner" and ev["judge"] == "owner"
         assert any(f["name"] == "News check (the subnet's own account)" and "Important" in f["value"]
                    for f in cards[-1]["embeds"][0]["fields"])
-        m.owner_important = False                          # NEWS_X_SUBNET_IMPORTANT=false: the AI judges it again
+        m.owner_important = False                          # NEWS_X_SUBNET_IMPORTANT=false (the default): the AI judges it
         try:
             await m._post_x(dict(q, id="2113100000000000001"), "TargonCompute", feed_kind="x_subnet", netuid=4)
             assert False, "with the setting off, the AI is asked"

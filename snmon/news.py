@@ -153,7 +153,8 @@ class NewsMonitor:
         self.judge = None           # NewsJudge: is a post important news? (set by the app)
         self.const_ids: set[str] = set()   # const's Discord user id(s): all he posts is news, always important (set by the app)
         self.const_x: set[str] = set()     # … and his X account(s), lowercase (NEWS_X_ACCOUNTS)
-        self.owner_important = True        # a subnet's own X account's post is always important (NEWS_X_SUBNET_IMPORTANT)
+        self.owner_important = False       # a subnet's own X account's post always important? (NEWS_X_SUBNET_IMPORTANT;
+                                           # off since 23 Oct, the user's call: the AI judges it like any other post)
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -945,7 +946,7 @@ class NewsMonitor:
             info = self.meta.info(n)
             buyer = a.get("acquirer") or f"@{author}"
             if accounts is not None:
-                accounts.claim(n, author, info)   # its posts are the subnet's from now on (always important)
+                accounts.claim(n, author, info)   # its posts are watched as the subnet's from now on
             self._x_sub[str(t.get("id"))] = time.time()   # a later Discord share of it is not reported again
             verdict = Verdict(True, "acquisition", f"{buyer} acquired SN{n} — {a.get('reason') or ''}".strip(" —"), "ai")
             print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S')} ── 🤝 SN{n} acquired by {buyer} (@{author}) · X post "
