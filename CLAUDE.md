@@ -62,8 +62,10 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
   8% from +6, 5% from +10, 2% from +12 (`LAUNCH_TRAIL_STEPS`); after those 5 blocks, pending unstakes in the mempool that
   would break the trail sell it at once, in the same block (`LAUNCH_MEMPOOL_EXIT`); the owner unstaking any alpha
   sells it at once, every other rule aside (`LAUNCH_OWNER_EXIT`).
-- Coldkey swap (subnet sale): all-in like a new subnet (`SWAP_MAX_STAKE_TAO=0`); a pending swap is checked against the
-  owner's announcement first (a swap the chain will refuse is not traded). Exit 1%.
+- Coldkey swap (subnet sale): all-in like a new subnet (`SWAP_MAX_STAKE_TAO=0`). SPEED (23 Oct): announcements are read
+  every 25 blocks and an announced, runnable swap has its sell-and-stake pre-signed every block — a mempool sighting is
+  a broadcast alone, NO chain read after it (checked against the announcement in memory; none in memory = traded
+  unchecked). SN113: seen 3 s before its block, built on the spot, the stake landed a block late. Exit 1%.
 - const post, rename (name change, or a new/changed GitHub link or website — `RENAME_LINKS`; also a subnet SOLD, its
   buyer's X post found by the monitor's X search — news kind `acquisition`, bought like a rename): up to 10 τ from the free
   balance (everything sold first only if short). Exit 1%; also after 20 blocks with no new high (10 once it rose) — every trade has this, swap / new subnet / rename too (23 Oct). A const post older than 15 s is never acted on (old posts came back as new: SN97, 11 trades). const's first 3 blocks after the stake are not acted on (`CONST_GRACE_BLOCKS`).
