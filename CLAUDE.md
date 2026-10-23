@@ -45,10 +45,11 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
   re-finds the subnet's X account at once.
 - Buybacks (`snmon/buyback.py`, on chain, every block): add_stake_burn (event AddStakeBurn), the owner's coldkey
   buying its own subnet, a named buyback wallet (`NEWS_BUYBACK_WALLETS`), or buy + burn in one block → 💰 card and a
-  `buyback` event (the bots' own buyback trade, run like a rename). Also a hidden buyback (user's rule): one wallet's
-  buy ≥ 50 τ (new money) paid by the owner (directly / one hop) or an exchange / bridge (named, or 5,000+ transactions
-  paying 20+ wallets), by a new quiet wallet (≤ 50 transactions) that did not sell that subnet in 24 h — `snmon/funding.py`,
-  transfers and sells kept 7 days in `data/transfers.db`. 6-hour dry run 23 Oct: 7 of 95 big buys (SN63's buyer B ×4).
+  `buyback` event (the bots' own buyback trade, run like a rename). Also a hidden buyback: one wallet's buy ≥ 50 τ (new
+  money) by a new quiet wallet (≤ 50 transactions, no sell of that subnet in 24 h) paid by the owner (directly / one hop).
+  Paid straight from an exchange / bridge (named, or 5,000+ transactions paying 20+ wallets) → only a 🏦 EXCHANGE BUY card
+  ("it may be the owner buying back"), NOT sent to the bots (user's call, 23 Oct) — `snmon/funding.py`, transfers and
+  sells kept 7 days in `data/transfers.db`.
 - Discord: a user account's token (`NEWS_DISCORD_TOKEN`, now vic_x.; the first one was removed from the server on 21 Oct).
 - Every post is judged before it goes to the bots (`snmon/judge.py`): gpt-6.1-sol ×2 raced + gpt-6-luna, whose
   "important" goes out at once. const is never left to the AI: everything he writes in a subnet's Discord channel (by his

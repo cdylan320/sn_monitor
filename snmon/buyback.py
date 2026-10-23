@@ -32,7 +32,8 @@ class Buyback:
                 "wallet": f"the team's buyback wallet bought {self.tao:,.2f} τ",
                 "buy+burn": f"{self.tao:,.2f} τ bought and burned in the same block",
                 "owner-funded": f"a wallet funded by the owner bought {self.tao:,.2f} τ",
-                "exchange": f"one wallet bought {self.tao:,.2f} τ with money straight from an exchange / bridge"}[self.how]
+                "exchange": f"a new wallet bought {self.tao:,.2f} τ with money straight from an exchange / bridge — it may "
+                            f"be the owner buying back"}[self.how]
 
 
 def _fields(a, names: tuple[str, ...]) -> list:

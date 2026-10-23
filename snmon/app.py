@@ -291,14 +291,20 @@ class App:
         self.discord.edit_later(msg_id, {"embeds": embeds})
 
     async def _big_buy(self, cold: str, n: int, tao: float, owner: str | None, block: int) -> None:
-        """One wallet bought ≥ NEWS_BUYBACK_BIG_TAO of subnet `n`: a buyback when its money is the owner's or an exchange's
-        (funding.Funding.check — the user's rule, 23 Oct)."""
+        """One wallet bought ≥ NEWS_BUYBACK_BIG_TAO of subnet `n` (funding.Funding.check): paid with the owner's money → a
+        buyback (card + the bots' buyback trade); paid straight from an exchange / bridge → only a 🏦 card ("it may be the
+        owner buying back") — not sent to the bots (the user's call, 23 Oct: SN51's 50 τ exchange buy was no buyback)."""
         try:
             hit = await self.funding.check(cold, owner, tao, netuid=n)
             if hit is None:
                 return
             how, detail = hit
-            await self._buyback(buyback.Buyback(n, tao, how, cold, detail), block)
+            b = buyback.Buyback(n, tao, how, cold, detail)
+            if how == "exchange":
+                if self.subnets is not None:
+                    await self.subnets.exchange_buy(b, block)
+                return
+            await self._buyback(b, block)
         except Exception:
             log.exception("big buy SN%d by %s", n, cold[:8])
 

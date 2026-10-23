@@ -164,6 +164,62 @@ def test_an_active_wallet_is_a_whale_or_a_bot_not_a_teams_buyback_wallet():
     asyncio.run(go())
 
 
+
+def test_an_exchange_funded_big_buy_is_only_shown_not_sent_to_the_bots_an_owner_funded_one_is_a_buyback():
+    # 23 Oct 17:01, SN51: a new wallet's 50 τ buy paid by a 46,139-transaction wallet was posted as 💰 BUYBACK and traded;
+    # the user: that is an exchange buy — show it ("it may be the owner buying back"), do not trade it
+    import types
+    from snmon.app import App
+    from snmon.buyback import Buyback
+
+    async def go():
+        app = App.__new__(App)
+        cards, events = [], []
+
+        class Watch:
+            async def exchange_buy(self, b, block):
+                cards.append(("exchange", b.netuid))
+
+            async def buyback(self, b, block):
+                cards.append(("buyback", b.netuid))
+
+        class Funding:
+            def __init__(self, hit):
+                self.hit = hit
+
+            async def check(self, *a, **k):
+                return self.hit
+
+        class Feed:
+            def publish(self, ev):
+                events.append(ev)
+                return 2
+        app.subnets, app.news_feed = Watch(), Feed()
+        app.det = types.SimpleNamespace(history={}, last_block=1)
+        app.funding = Funding(("exchange", "paid with 141.36 τ from a wallet with 46,139 transactions that paid 24 wallets"))
+        await app._big_buy("5GA1r", 51, 50.0, "5Owner", 9348808)
+        assert cards == [("exchange", 51)] and events == []                     # shown, not sent to the bots
+        app.funding = Funding(("owner-funded", "60.00 τ came straight from the owner wallet"))
+        await app._big_buy("5Direct", 51, 55.0, "5Owner", 9348809)
+        assert cards[-1] == ("buyback", 51) and events[-1]["kind"] == "buyback"
+    asyncio.run(go())
+
+
+def test_the_exchange_buy_card():
+    async def go():
+        from snmon.buyback import Buyback
+
+        class Meta:
+            subnets = {51: SubnetInfo(51, "lium.io", "", 184200.0, 1, None, None, "5Owner")}
+        w = SubnetWatch(Meta(), None, None, Path(tempfile.mkdtemp()) / "s.json", dry_run=True)
+        await w.exchange_buy(Buyback(51, 50.0, "exchange", "5GA1r", "paid with 141.36 τ from a wallet with 46,139 "
+                                                                     "transactions that paid 24 wallets"), 9348808)
+        p = w.sent[-1]
+        assert "🏦 **EXCHANGE BUY** · **SN51 lium.io**" in p["content"] and "it may be the owner buying back" in p["content"]
+        assert "BUYBACK" not in p["content"] and "Not traded" in p["embeds"][0]["description"]
+    asyncio.run(go())
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

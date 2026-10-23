@@ -590,6 +590,22 @@ class SubnetWatch:
         await self._post(f"💰 **BUYBACK** · **{self._sn(b.netuid, info)}** — {b.text()}",
                          self._embed(b.netuid, info, f"💰 BUYBACK · SN{b.netuid}", f"How: {how}.", fields, GREEN, block))
 
+    async def exchange_buy(self, b, block: int) -> None:
+        """🏦 a new, quiet wallet bought big with money straight from an exchange / bridge — it MAY be the owner buying
+        back, but nothing ties it to the owner, so it is only shown (the bots do not trade it)."""
+        info = self.meta.subnets.get(b.netuid)
+        fields = [{"name": "Bought", "value": f"**{b.tao:,.2f} τ**", "inline": True}] + self._market(b.netuid, info)
+        if b.coldkey:
+            fields.append({"name": "Wallet", "value": acct(b.coldkey), "inline": True})
+        if b.detail:
+            fields.append({"name": "Money", "value": b.detail[:1000], "inline": False})
+        await self._post(f"🏦 **EXCHANGE BUY** · **{self._sn(b.netuid, info)}** — a new wallet bought {b.tao:,.2f} τ with money "
+                         f"straight from an exchange / bridge · it may be the owner buying back",
+                         self._embed(b.netuid, info, f"🏦 EXCHANGE BUY · SN{b.netuid}",
+                                     "A new, quiet wallet bought with money straight from an exchange / bridge. It may be the "
+                                     "owner buying back — nothing on chain ties it to the owner's wallet. Not traded.",
+                                     fields, BLUE, block))
+
     async def _post(self, headline: str, embed: dict) -> None:
         payload = {"content": alerts.content([headline]), "embeds": [embed], "allowed_mentions": {"parse": []}}
         self.posted += 1
