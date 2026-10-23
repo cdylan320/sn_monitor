@@ -43,6 +43,9 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
   and names a subnet → AI check → 🤝 card, `acquisition` event (the bots trade it like a rename), the buyer's account
   becomes the subnet's X account (kept until its identity changes on chain). An identity / owner change on chain also
   re-finds the subnet's X account at once.
+- Buybacks (`snmon/buyback.py`, on chain, every block): add_stake_burn (event AddStakeBurn), the owner's coldkey
+  buying its own subnet, a named buyback wallet (`NEWS_BUYBACK_WALLETS`), or buy + burn in one block → 💰 card and a
+  `buyback` event (the bots buy it like important news). A big buy by an unknown wallet is not a buyback.
 - Discord: a user account's token (`NEWS_DISCORD_TOKEN`, now vic_x.; the first one was removed from the server on 21 Oct).
 - Every post is judged before it goes to the bots (`snmon/judge.py`): gpt-6.1-sol ×2 raced + gpt-6-luna, whose
   "important" goes out at once. const is never left to the AI: everything he writes in a subnet's Discord channel (by his

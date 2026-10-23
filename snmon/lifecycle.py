@@ -574,6 +574,18 @@ class SubnetWatch:
             e["author"] = alerts._author(info) if info else {"name": f"SN{n}", "url": alerts.subnet_url(n)}
         return e
 
+    async def buyback(self, b, block: int) -> None:
+        """💰 a subnet's team bought its own token back (buyback.find)."""
+        info = self.meta.subnets.get(b.netuid)
+        how = {"add_stake_burn": "the chain's buyback call (add_stake_burn): bought and burned at once",
+               "owner": "the subnet owner's own coldkey", "wallet": "the team's buyback wallet (NEWS_BUYBACK_WALLETS)",
+               "buy+burn": "bought, then burned / recycled in the same block"}[b.how]
+        fields = [{"name": "Bought", "value": f"**{b.tao:,.2f} τ**", "inline": True}] + self._market(b.netuid, info)
+        if b.coldkey:
+            fields.append({"name": "Wallet", "value": acct(b.coldkey), "inline": True})
+        await self._post(f"💰 **BUYBACK** · **{self._sn(b.netuid, info)}** — {b.text()}",
+                         self._embed(b.netuid, info, f"💰 BUYBACK · SN{b.netuid}", f"How: {how}.", fields, GREEN, block))
+
     async def _post(self, headline: str, embed: dict) -> None:
         payload = {"content": alerts.content([headline]), "embeds": [embed], "allowed_mentions": {"parse": []}}
         self.posted += 1

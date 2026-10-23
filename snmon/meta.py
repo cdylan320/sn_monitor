@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from async_substrate_interface import AsyncSubstrateInterface
 from scalecodec.base import ScaleBytes
 
+from .buyback import EVENTS as BUYBACK_EVENTS
 from .chain import RAO
 
 log = logging.getLogger("snmon.meta")
@@ -148,8 +149,8 @@ class Meta:
 
     # ── events → trades (for "what caused it") ───────────────────────────
 
-    async def _trades(self, block: int, block_hash: str) -> tuple[list[Trade], list[tuple[str, tuple]]]:
-        """One decode of the block's events → (stake trades, subnet lifecycle events)."""
+    async def _trades(self, block: int, block_hash: str) -> tuple[list[Trade], list[tuple[str, tuple]], list[tuple[str, tuple]]]:
+        """One decode of the block's events → (stake trades, subnet lifecycle events, buyback events — buyback.EVENTS)."""
         sub = await self._substrate()
         try:
             events = await sub.get_events(block_hash)
@@ -158,6 +159,7 @@ class Meta:
             raise
         out: list[Trade] = []
         life: list[tuple[str, tuple]] = []
+        burns: list[tuple[str, tuple]] = []
         for e in events:
             ev = e.get("event", e)
             if ev.get("module_id") != "SubtensorModule":
@@ -169,7 +171,9 @@ class Meta:
                 out.append(Trade(block, int(netuid), name == "StakeAdded", int(tao) / RAO, int(alpha) / RAO, str(cold)))
             elif name in LIFECYCLE_EVENTS:
                 life.append((name, ev.get("attributes")))  # a tuple, a dict of named fields, or one bare value
-        return out, life
+            elif name in BUYBACK_EVENTS:
+                burns.append((name, ev.get("attributes")))
+        return out, life, burns
 
     async def _facts(self) -> dict:
         """Slot usage, the cost to register a subnet, and which subnet is first in line to be pruned."""

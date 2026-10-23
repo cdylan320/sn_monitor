@@ -18,7 +18,7 @@ from datetime import datetime
 import aiohttp
 import orjson
 
-from . import alerts, fmt
+from . import alerts, buyback, fmt
 from .chain import PRICE_ALL, Block, Feed, blake2_256, decode_prices, fetch_history
 from .config import BLOCK_SECONDS, ROOT, Config
 from .detector import Detector, Signal
@@ -284,16 +284,35 @@ class App:
             emb["fields"].append(field)
         self.discord.edit_later(msg_id, {"embeds": embeds})
 
+    async def _buyback(self, b, block: int) -> None:
+        """A subnet's team bought its token back: the card, and the event the bots buy on (kind "buyback")."""
+        try:
+            if self.news_feed is not None:
+                price = self.det.history.get(self.det.last_block, {}).get(b.netuid) or 0
+                n = self.news_feed.publish({"netuid": b.netuid, "kind": "buyback", "who": b.how, "source": f"chain #{block}",
+                                            "text": b.text(), "url": f"chain:{block}:{b.netuid}:buyback", "posted": time.time(),
+                                            "price": int(price), "important": True, "category": "buyback",
+                                            "why": b.text(), "judge": "chain"})
+                print(fmt.dim(f"{now_str()}    ↳ buyback SN{b.netuid} sent to {n} trading bot(s)"))
+            if self.subnets is not None:
+                await self.subnets.buyback(b, block)
+        except Exception:
+            log.exception("buyback SN%d failed", b.netuid)
+
     async def _after_block(self, block: Block) -> None:
         try:
-            tr, life = await asyncio.wait_for(self.meta.trades(block.number, block.hash), 15)
+            tr, life, burns = await asyncio.wait_for(self.meta.trades(block.number, block.hash), 15)
             self.trades_failed.discard(block.number)
         except Exception as e:
             log.debug("trade log failed for #%d: %s", block.number, e)
-            tr, life = [], []
+            tr, life, burns = [], [], []
             self.trades_failed.add(block.number)
         if life and self.subnets:
             asyncio.create_task(self.subnets.on_events(block.number, life))
+        if self.cfg.news_buybacks and (tr or burns):
+            owners = {n: s.owner for n, s in self.meta.subnets.items() if s.owner}
+            for b in buyback.find(tr, burns, owners, self.cfg.news_buyback_wallets, self.cfg.news_buyback_min_tao):
+                asyncio.create_task(self._buyback(b, block.number))
         if self.subnets:
             due = self.subnets.due_swaps(block.number)
             if due:     # an announced owner swap has just become executable
