@@ -334,7 +334,10 @@ class App:
                                 elif ev.get("module_id") == "SubtensorModule" and ev.get("event_id") == "StakeRemoved":
                                     cold, _h, tao_, _a, net, *_ = ev["attributes"]
                                     sold.append((str(cold), int(net), int(tao_) / RAO))
-                            ts = time.time() - (head - b) * BLOCK_SECONDS
+                            # the block's own time (time.time() - blocks × 12 s drifted by the fill-in's own 10 minutes:
+                            # SN63's buyer was funded at 15:57:12, it was stored as 16:07:43 — after its 16:03 buy)
+                            ts = getattr(await sub.query("Timestamp", "Now", block_hash=h), "value", 0) / 1000 or (
+                                time.time() - (head - b) * BLOCK_SECONDS)
                             kept = [(b, ts, s_, d_, t_) for s_, d_, t_ in rows if log_.keep(s_, d_, t_)]
                             if kept and b > covered:
                                 log_.db.executemany("INSERT INTO transfers VALUES (?, ?, ?, ?, ?)", kept)

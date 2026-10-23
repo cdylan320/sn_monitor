@@ -79,7 +79,7 @@ def funding(rows, sells=()):
     for when, cold, net, tao in sells:
         t.add(1, when, [], [(cold, net, tao)])
     names = {HIVE: (49330, "Tao Bridge"), HOT: (68146, ""), OWNER: (39, "Alpha Trader Exchange"), "5Friend": (12, ""),
-             BOT: (6401, "")}
+             BOT: (6401, ""), "5FH3p333o7": (251, "")}
 
     async def account(addr):
         return names.get(addr, (3, ""))
@@ -144,6 +144,16 @@ def test_a_busy_bot_paying_one_wallet_is_not_an_exchange_and_a_buyer_that_sold_l
         assert await f.check("5Gb23Q7n11", None, 50.0, netuid=53) is None     # the bot's money is not an exchange's
         assert await f.check("5FUH8krjU3", OWNER, 100.0, netuid=63) is None   # sold SN63 45 minutes ago: a trader
         assert (await f.check("5FUH8krjU3", None, 100.0, netuid=39))[0] == "exchange"   # another subnet: still counts
+    asyncio.run(go())
+
+
+def test_an_active_wallet_is_a_whale_or_a_bot_not_a_teams_buyback_wallet():
+    # 23 Oct: 5FH3p333o7 (251 transactions) bought SN64, SN4 and SN51 in 9 minutes with exchange money
+    import time
+    f = funding([(time.time() - 3600, HOT, "5FH3p333o7", 179.3)])
+
+    async def go():
+        assert await f.check("5FH3p333o7", None, 60.8, netuid=51) is None
     asyncio.run(go())
 
 

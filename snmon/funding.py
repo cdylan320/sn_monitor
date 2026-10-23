@@ -5,7 +5,9 @@ The user's rule (23 Oct): one wallet buys at least NEWS_BUYBACK_BIG_TAO (50 τ) 
   · from an exchange / bridge — sent by a service wallet: an on-chain name that says so ("Tao Bridge", an exchange), or
     thousands of transactions (SERVICE_NONCE) paying many different wallets (SERVICE_PAYEES) — covering at least half of
     the buy
-→ a buyback — unless the buyer sold this subnet in the last day (a trader: a team's buyback wallet does not sell).
+→ a buyback — unless the buyer sold this subnet in the last day (a trader: a team's buyback wallet does not sell), or
+is an active wallet (more than BUYER_MAX_TX transactions: SN63's buyers had 4 each; a whale that bought SN64, SN4 and
+SN51 in 9 minutes had 251, a bot 2,822).
 Dry run over 6 hours of 23 Oct with transactions alone as the sign: 15 of 98 big buys — among them a trader that had
 sold 194 τ of SN63 half an hour before, and a follower bot's wallet (6,401 transactions, but it paid ONE wallet a day;
 the exchange hot wallet behind SN63's buyer paid 57). SN63, 23 Oct: wallet A (74.77 τ) was paid by "Tao Bridge" (5HiveME…, 49,330 transactions); wallet B
@@ -32,6 +34,7 @@ WINDOW_DAYS = 7
 SERVICE_NONCE = 5000      # a service wallet (an exchange's or a bridge's hot wallet) has this many transactions …
 SERVICE_PAYEES = 20       # … and paid this many different wallets in the window (a busy trading bot pays a few)
 TRADER_HOURS = 24         # a buyer that sold this subnet within this many hours is a trader
+BUYER_MAX_TX = 50         # a buyback wallet is new and quiet: more transactions than this = an active whale or bot
 SERVICE_NAME = re.compile(r"exchange|bridge|binance|kraken|mexc|gate\.?io|bitget|kucoin|okx|htx|huobi|coinbase|crypto\.com"
                           r"|bybit|upbit|bitfinex|coinex|lbank|bingx|bitmart", re.I)
 COVER = 0.5               # exchange / bridge money must cover at least this share of the buy
@@ -129,6 +132,12 @@ class Funding:
         ins = self.log.into(buyer, since)
         if not ins:
             return None
+        try:
+            busy, _ = await self.account(buyer)
+        except Exception:
+            busy = 0
+        if busy > BUYER_MAX_TX:
+            return None                       # an active whale or bot, not a team's buyback wallet
         if owner:
             got = sum(t for s, t, _ in ins if s == owner)
             if got:
