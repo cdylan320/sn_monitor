@@ -60,6 +60,68 @@ def test_the_buyback_card():
     asyncio.run(go())
 
 
+
+A = "5Da5PCiBBkSFS9gYWziHBLvTVRyZox1TRUGbhdqS3ydGmC4w"      # SN63's buyer at 15:43 (74.77 τ)
+B = "5E6zdJowQkZ9ef5wp72MerXHwBs82BgtqEfH2mqAT1wHW7kf"      # … at 16:01 (497.5 τ)
+HIVE = "5HiveMEoWPmQmBAb8v63bKPcFhgTGCmST1TVZNvPHSTKFLCv"   # "Tao Bridge", 49,330 transactions
+HOT = "5FqqXKb9zonSNKbZhEuHYjCXnmPbX9tdzMCU2gx8gir8Z8a5"    # 68,146 transactions, no name: an exchange's hot wallet
+POOL = "5EYCAe5jLQhn6ofDSw8LqPr86oRyDdKpKXDftdxZr1UHqWzq"   # SN63's pool (a pallet account)
+
+
+def funding(rows):
+    from snmon.funding import Funding, TransferLog
+    t = TransferLog(Path(tempfile.mkdtemp()) / "t.db")
+    for when, src, dst, tao in rows:
+        t.add(1, when, [(src, dst, tao)])
+    names = {HIVE: (49330, "Tao Bridge"), HOT: (68146, ""), OWNER: (39, "Alpha Trader Exchange"), "5Friend": (12, "")}
+
+    async def account(addr):
+        return names.get(addr, (3, ""))
+    return Funding(t, account)
+
+
+def test_a_big_buy_paid_by_an_exchange_or_a_bridge_is_a_buyback_like_sn63s():
+    import time
+    now = time.time()
+    f = funding([(now - 4 * 86400, HIVE, A, 274.24), (now - 240, HOT, B, 500.0), (now - 100, B, POOL, 497.5)])
+
+    async def go():
+        a = await f.check(A, OWNER, 74.77)
+        b = await f.check(B, OWNER, 497.5)
+        assert a[0] == "exchange" and "Tao Bridge" in a[1]
+        assert b[0] == "exchange" and "68,146 transactions" in b[1]
+        assert await f.check("5Nobody", OWNER, 80.0) is None                   # no money came in: an old balance
+    asyncio.run(go())
+    assert f.log.into(POOL, 0) == []                                            # pool movements are not kept
+
+
+def test_money_from_the_owner_directly_or_through_one_wallet_is_a_buyback_a_persons_money_is_not():
+    import time
+    now = time.time()
+    f = funding([(now - 3600, OWNER, "5Direct", 60.0), (now - 7200, OWNER, "5Mid", 200.0), (now - 3600, "5Mid", "5Via", 90.0),
+                 (now - 600, "5Friend", "5Person", 100.0), (now - 600, HOT, "5Little", 10.0), (now - 600, "5Friend", "5Little", 90.0)])
+
+    async def go():
+        assert (await f.check("5Direct", OWNER, 55.0))[0] == "owner-funded"
+        assert (await f.check("5Via", OWNER, 85.0))[0] == "owner-funded"
+        assert await f.check("5Person", OWNER, 95.0) is None                   # a friend's money: a person, not a service
+        assert await f.check("5Little", OWNER, 95.0) is None                   # 10 τ of exchange money cannot pay 95 τ
+    asyncio.run(go())
+
+
+def test_a_big_buy_is_new_money_not_moving_everything_from_other_subnets():
+    new = [buy(63, 74.77, A)]
+    assert find_big(new) == [(A, 63, 74.77)]
+    allin = [buy(5, 120, "5Bot", sell=True), buy(63, 118, "5Bot")]           # our bots' all-in move: sold 5, bought 63
+    assert find_big(allin) == []
+    assert find_big([buy(63, 30, A)]) == []                                     # under 50 τ
+
+
+def find_big(trades):
+    from snmon.buyback import big_buys
+    return [(c, n, round(t, 2)) for c, n, t in big_buys(trades, 50.0)]
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

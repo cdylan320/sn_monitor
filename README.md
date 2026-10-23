@@ -266,7 +266,9 @@ X adds a post to a list 6-14 s late (median ~9.5 s), and fxtwitter had it first 
 **Buybacks.** A subnet's team buying its own token back is found on chain, block by block (`NEWS_BUYBACKS`): the
 chain's buyback call `add_stake_burn` (bought and burned at once), the owner's coldkey buying its own subnet, a buyback
 wallet a team named (`NEWS_BUYBACK_WALLETS`), or a buy burned in the same block — at least `NEWS_BUYBACK_MIN_TAO` (5 τ).
-It becomes a 💰 card and a `buyback` event that the bots buy like important news.
+A **hidden buyback** counts too: one wallet buying at least `NEWS_BUYBACK_BIG_TAO` (50 τ) with new money that came from the
+owner's wallet (directly or through one wallet) or from an exchange / bridge (`snmon/funding.py`; transfers are kept 7
+days in `data/transfers.db`). It becomes a 💰 card and a `buyback` event; the bots run it as their own buyback trade.
 
 **const is always important.** Everything const writes in a subnet's Discord channel is news — even "Nice work" or only
 an image — matched by his user id (`NEWS_CONST_DISCORD_IDS`), never by name. That, his X posts / reposts / replies, and a

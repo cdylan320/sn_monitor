@@ -19,7 +19,7 @@ import aiohttp
 import orjson
 
 from . import alerts, buyback, fmt
-from .chain import PRICE_ALL, Block, Feed, blake2_256, decode_prices, fetch_history
+from .chain import PRICE_ALL, RAO, Block, Feed, blake2_256, decode_prices, fetch_history
 from .config import BLOCK_SECONDS, ROOT, Config
 from .detector import Detector, Signal
 from .discord import Discord
@@ -28,6 +28,7 @@ from .mempool import Mempool
 from .bars import BUCKET, Bars
 from .meta import Meta, Trade
 from .feed import NewsFeed
+from .funding import Funding, TransferLog
 from .news import ACQ_QUERY, NewsMonitor
 from .rpc import Rpc
 from .signals import Signals, parse_trigger
@@ -74,6 +75,9 @@ class App:
         self._alerts_file = ROOT / "data" / "alerts.jsonl"
         self._alerts_file.parent.mkdir(exist_ok=True)
         self.subnets: SubnetWatch | None = None
+        # a big buy's money — the owner's or an exchange's = a buyback (funding.py)
+        self.funding = (Funding(TransferLog(ROOT / "data" / "transfers.db"), self.meta.account)
+                        if cfg.news_buybacks and cfg.news_buyback_big_tao > 0 else None)
         if cfg.subnet_alerts:
             self.subnet_discord = self._hook(cfg.subnet_webhook_url)   # the news channel unless given its own
             self.subnets = SubnetWatch(self.meta, self.subnet_discord, self._refresh_meta, ROOT / "data" / "subnets.json",
@@ -138,6 +142,8 @@ class App:
             self._archive = Rpc(self.cfg.archive_endpoint)
             self._archive.start()
 
+        if self.funding is not None:
+            asyncio.create_task(self._transfers_backfill())
         await self._backfill()
         print(fmt.dim("  " + "─" * 66))
         self.ready = True
@@ -284,6 +290,62 @@ class App:
             emb["fields"].append(field)
         self.discord.edit_later(msg_id, {"embeds": embeds})
 
+    async def _big_buy(self, cold: str, n: int, tao: float, owner: str | None, block: int) -> None:
+        """One wallet bought ≥ NEWS_BUYBACK_BIG_TAO of subnet `n`: a buyback when its money is the owner's or an exchange's
+        (funding.Funding.check — the user's rule, 23 Oct)."""
+        try:
+            hit = await self.funding.check(cold, owner, tao)
+            if hit is None:
+                return
+            how, detail = hit
+            await self._buyback(buyback.Buyback(n, tao, how, cold, detail), block)
+        except Exception:
+            log.exception("big buy SN%d by %s", n, cold[:8])
+
+    async def _transfers_backfill(self, blocks: int = 7200) -> None:
+        """The first start: the last day's transfers from the archive node (later ones come block by block), so a buyer
+        funded a few hours ago is already known."""
+        from async_substrate_interface import AsyncSubstrateInterface
+        log_ = self.funding.log
+        try:
+            sub = AsyncSubstrateInterface(self.cfg.archive_endpoint, ss58_format=42)
+            await sub.initialize()
+            head = await sub.get_block_number(None)
+            start = max(log_.last_block + 1, head - blocks)
+            if start >= head - 2:
+                return
+            t0, sem, done = time.time(), asyncio.Semaphore(6), 0
+
+            async def one(b: int) -> None:
+                nonlocal done
+                async with sem:
+                    for attempt in range(3):
+                        try:
+                            h = await sub.get_block_hash(b)
+                            rows = []
+                            for e in await sub.get_events(h):
+                                ev = (e if isinstance(e, dict) else e.value).get("event", e)
+                                if ev.get("module_id") == "Balances" and ev.get("event_id") == "Transfer":
+                                    a = ev.get("attributes")
+                                    s_, d_, amt = (a.get("from"), a.get("to"), a.get("amount")) if isinstance(a, dict) else tuple(a)[:3]
+                                    rows.append((str(s_), str(d_), int(amt or 0) / RAO))
+                            ts = time.time() - (head - b) * BLOCK_SECONDS
+                            kept = [(b, ts, s_, d_, t_) for s_, d_, t_ in rows if log_.keep(s_, d_, t_)]
+                            if kept:
+                                log_.db.executemany("INSERT INTO transfers VALUES (?, ?, ?, ?, ?)", kept)
+                            done += 1
+                            return
+                        except Exception:
+                            await asyncio.sleep(1 + attempt)
+            for i in range(start, head, 200):
+                await asyncio.gather(*(one(b) for b in range(i, min(i + 200, head))))
+                log_.db.commit()
+            print(fmt.dim(f"{now_str()} ── transfers: the last {done:,} blocks filled in from the archive in "
+                          f"{time.time() - t0:.0f}s (for the buyback check)"))
+            await sub.close()
+        except Exception as e:
+            log.warning("transfer backfill failed: %s", e)
+
     async def _buyback(self, b, block: int) -> None:
         """A subnet's team bought its token back: the card, and the event the bots buy on (kind "buyback")."""
         try:
@@ -301,18 +363,29 @@ class App:
 
     async def _after_block(self, block: Block) -> None:
         try:
-            tr, life, burns = await asyncio.wait_for(self.meta.trades(block.number, block.hash), 15)
+            tr, life, burns, moved = await asyncio.wait_for(self.meta.trades(block.number, block.hash), 15)
             self.trades_failed.discard(block.number)
         except Exception as e:
             log.debug("trade log failed for #%d: %s", block.number, e)
-            tr, life, burns = [], [], []
+            tr, life, burns, moved = [], [], [], []
             self.trades_failed.add(block.number)
         if life and self.subnets:
             asyncio.create_task(self.subnets.on_events(block.number, life))
+        if self.funding is not None and block.number not in self.trades_failed:
+            try:
+                self.funding.log.add(block.number, time.time(), moved)
+            except Exception as e:
+                log.debug("transfer log #%d: %s", block.number, e)
         if self.cfg.news_buybacks and (tr or burns):
             owners = {n: s.owner for n, s in self.meta.subnets.items() if s.owner}
-            for b in buyback.find(tr, burns, owners, self.cfg.news_buyback_wallets, self.cfg.news_buyback_min_tao):
+            found = buyback.find(tr, burns, owners, self.cfg.news_buyback_wallets, self.cfg.news_buyback_min_tao)
+            for b in found:
                 asyncio.create_task(self._buyback(b, block.number))
+            if self.funding is not None and self.cfg.news_buyback_big_tao > 0:
+                done = {b.netuid for b in found}
+                for cold, n, tao in buyback.big_buys(tr, self.cfg.news_buyback_big_tao):
+                    if n not in done and cold != owners.get(n):
+                        asyncio.create_task(self._big_buy(cold, n, tao, owners.get(n), block.number))
         if self.subnets:
             due = self.subnets.due_swaps(block.number)
             if due:     # an announced owner swap has just become executable

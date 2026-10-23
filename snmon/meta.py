@@ -149,8 +149,9 @@ class Meta:
 
     # ── events → trades (for "what caused it") ───────────────────────────
 
-    async def _trades(self, block: int, block_hash: str) -> tuple[list[Trade], list[tuple[str, tuple]], list[tuple[str, tuple]]]:
-        """One decode of the block's events → (stake trades, subnet lifecycle events, buyback events — buyback.EVENTS)."""
+    async def _trades(self, block: int, block_hash: str):
+        """One decode of the block's events → (stake trades, subnet lifecycle events, buyback events — buyback.EVENTS,
+        transfers (from, to, τ) — for funding.TransferLog)."""
         sub = await self._substrate()
         try:
             events = await sub.get_events(block_hash)
@@ -160,8 +161,14 @@ class Meta:
         out: list[Trade] = []
         life: list[tuple[str, tuple]] = []
         burns: list[tuple[str, tuple]] = []
+        moved: list[tuple[str, str, float]] = []
         for e in events:
             ev = e.get("event", e)
+            if ev.get("module_id") == "Balances" and ev.get("event_id") == "Transfer":
+                a = ev.get("attributes")
+                src, dst, amount = ((a.get("from"), a.get("to"), a.get("amount")) if isinstance(a, dict) else tuple(a)[:3])
+                moved.append((str(src), str(dst), int(amount or 0) / RAO))
+                continue
             if ev.get("module_id") != "SubtensorModule":
                 continue
             name = ev.get("event_id")
@@ -173,7 +180,7 @@ class Meta:
                 life.append((name, ev.get("attributes")))  # a tuple, a dict of named fields, or one bare value
             elif name in BUYBACK_EVENTS:
                 burns.append((name, ev.get("attributes")))
-        return out, life, burns
+        return out, life, burns, moved
 
     async def _facts(self) -> dict:
         """Slot usage, the cost to register a subnet, and which subnet is first in line to be pruned."""
@@ -223,8 +230,19 @@ class Meta:
         return self._w.run(self._refresh(block_hash))
 
     def trades(self, block: int, block_hash: str):
-        """→ (trades, lifecycle events) for one block."""
+        """→ (trades, lifecycle events, buyback events, transfers) for one block."""
         return self._w.run(self._trades(block, block_hash))
+
+    def account(self, addr: str):
+        """→ (nonce, on-chain name) of a wallet."""
+        return self._w.run(self._account(addr))
+
+    async def _account(self, addr: str) -> tuple[int, str]:
+        sub = await self._substrate()
+        acc, idt = await asyncio.gather(sub.query("System", "Account", [addr]),
+                                        sub.query("SubtensorModule", "IdentitiesV2", [addr]))
+        acc, idt = getattr(acc, "value", acc) or {}, getattr(idt, "value", idt)
+        return int(acc.get("nonce") or 0), _text(idt.get("name")) if isinstance(idt, dict) else ""
 
     def facts(self):
         return self._w.run(self._facts())

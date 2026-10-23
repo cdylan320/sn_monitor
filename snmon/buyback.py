@@ -22,14 +22,17 @@ EVENTS = frozenset({"AddStakeBurn", "AlphaBurned", "AlphaRecycled"})
 class Buyback:
     netuid: int
     tao: float           # TAO the team spent buying
-    how: str             # "add_stake_burn" | "owner" | "wallet" | "buy+burn"
+    how: str             # "add_stake_burn" | "owner" | "wallet" | "buy+burn" | "owner-funded" | "exchange"
     coldkey: str         # who bought ("" when the event does not say)
+    detail: str = ""     # where the money came from (funding.Funding.check)
 
     def text(self) -> str:
         return {"add_stake_burn": f"bought back {self.tao:,.2f} τ of its token and burned it (the chain's buyback)",
                 "owner": f"the owner bought {self.tao:,.2f} τ of its own token",
                 "wallet": f"the team's buyback wallet bought {self.tao:,.2f} τ",
-                "buy+burn": f"{self.tao:,.2f} τ bought and burned in the same block"}[self.how]
+                "buy+burn": f"{self.tao:,.2f} τ bought and burned in the same block",
+                "owner-funded": f"a wallet funded by the owner bought {self.tao:,.2f} τ",
+                "exchange": f"one wallet bought {self.tao:,.2f} τ with money straight from an exchange / bridge"}[self.how]
 
 
 def _fields(a, names: tuple[str, ...]) -> list:
@@ -37,6 +40,23 @@ def _fields(a, names: tuple[str, ...]) -> list:
     if isinstance(a, dict):
         return [a.get(k) for k in names]
     return list(a) + [None] * (len(names) - len(a)) if isinstance(a, (list, tuple)) else [None] * len(names)
+
+
+def big_buys(trades, min_tao: float) -> list[tuple[str, int, float]]:
+    """(coldkey, netuid, τ) of each wallet that bought at least `min_tao` of one subnet in this block with NEW money — not
+    when it sold about as much of other subnets in the same block (moving everything into one subnet, like our bots)."""
+    net: dict[tuple[str, int], float] = defaultdict(float)
+    sold: dict[str, float] = defaultdict(float)
+    for t in trades:
+        net[(t.coldkey, t.netuid)] += t.tao if t.buy else -t.tao
+        if not t.buy:
+            sold[t.coldkey] += t.tao
+    out = []
+    for (cold, n), tao in net.items():
+        other = sold[cold] - sum(t.tao for t in trades if not t.buy and t.coldkey == cold and t.netuid == n)
+        if n and tao >= min_tao and other < 0.5 * tao:
+            out.append((cold, n, tao))
+    return sorted(out, key=lambda r: -r[2])
 
 
 def find(trades, events, owners: dict[int, str], wallets: dict[int, set[str]], min_tao: float) -> list[Buyback]:

@@ -149,6 +149,7 @@ class Config:
     news_buybacks: bool           # a subnet's team buying its token back (on chain) → a card and an event for the bots
     news_buyback_min_tao: float   # … at least this much TAO in one block
     news_buyback_wallets: dict    # netuid → buyback wallets a team named ("61:5Abc…,61:5Def…")
+    news_buyback_big_tao: float   # … one wallet's buy of at least this much, paid by the owner or an exchange (0 = off)
     news_x_acquisitions: bool     # search X (with the X login) for a subnet's sale announced by its buyer, any account
     news_x_search_seconds: float  # … this often (X allows 187 searches per 15 minutes)
     news_x_acquisition_query: str # … with this search ('' = news.ACQ_QUERY)
@@ -236,6 +237,7 @@ def load() -> Config:
         news_buybacks=_bool("NEWS_BUYBACKS", True),
         news_buyback_min_tao=_float("NEWS_BUYBACK_MIN_TAO", 5.0),
         news_buyback_wallets=_wallets("NEWS_BUYBACK_WALLETS"),
+        news_buyback_big_tao=_float("NEWS_BUYBACK_BIG_TAO", 50.0),
         news_x_acquisitions=_bool("NEWS_X_ACQUISITIONS", True),
         news_x_search_seconds=_float("NEWS_X_SEARCH_SECONDS", 6.0),
         news_x_acquisition_query=(os.getenv("NEWS_X_ACQUISITION_QUERY") or "").strip(),
