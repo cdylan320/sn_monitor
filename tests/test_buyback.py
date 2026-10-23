@@ -68,12 +68,18 @@ HOT = "5FqqXKb9zonSNKbZhEuHYjCXnmPbX9tdzMCU2gx8gir8Z8a5"    # 68,146 transaction
 POOL = "5EYCAe5jLQhn6ofDSw8LqPr86oRyDdKpKXDftdxZr1UHqWzq"   # SN63's pool (a pallet account)
 
 
-def funding(rows):
+def funding(rows, sells=()):
+    import time
     from snmon.funding import Funding, TransferLog
     t = TransferLog(Path(tempfile.mkdtemp()) / "t.db")
     for when, src, dst, tao in rows:
         t.add(1, when, [(src, dst, tao)])
-    names = {HIVE: (49330, "Tao Bridge"), HOT: (68146, ""), OWNER: (39, "Alpha Trader Exchange"), "5Friend": (12, "")}
+    for i in range(57):                                                         # the hot wallet pays many people a day
+        t.add(1, time.time() - 3600, [(HOT, f"5Customer{i}", 5.0)])
+    for when, cold, net, tao in sells:
+        t.add(1, when, [], [(cold, net, tao)])
+    names = {HIVE: (49330, "Tao Bridge"), HOT: (68146, ""), OWNER: (39, "Alpha Trader Exchange"), "5Friend": (12, ""),
+             BOT: (6401, "")}
 
     async def account(addr):
         return names.get(addr, (3, ""))
@@ -89,7 +95,7 @@ def test_a_big_buy_paid_by_an_exchange_or_a_bridge_is_a_buyback_like_sn63s():
         a = await f.check(A, OWNER, 74.77)
         b = await f.check(B, OWNER, 497.5)
         assert a[0] == "exchange" and "Tao Bridge" in a[1]
-        assert b[0] == "exchange" and "68,146 transactions" in b[1]
+        assert b[0] == "exchange" and "68,146 transactions that paid" in b[1]
         assert await f.check("5Nobody", OWNER, 80.0) is None                   # no money came in: an old balance
     asyncio.run(go())
     assert f.log.into(POOL, 0) == []                                            # pool movements are not kept
@@ -120,6 +126,25 @@ def test_a_big_buy_is_new_money_not_moving_everything_from_other_subnets():
 def find_big(trades):
     from snmon.buyback import big_buys
     return [(c, n, round(t, 2)) for c, n, t in big_buys(trades, 50.0)]
+
+
+
+BOT = "5Cw2qFy2tZy9ZLt4LsJc9b68nffQndZDHF1KZynmVbA4Z3pC"     # a follower bot: 6,401 transactions, pays ONE wallet
+
+
+def test_a_busy_bot_paying_one_wallet_is_not_an_exchange_and_a_buyer_that_sold_lately_is_a_trader():
+    # 23 Oct dry run: 15 of 98 big buys counted with "5,000+ transactions" alone — among them a follower bot's wallet,
+    # and 5FUH8krjU3, which had bought 180 τ of SN63 at 15:48 and sold 194 τ at 16:02
+    import time
+    now = time.time()
+    f = funding([(now - 900, BOT, "5Gb23Q7n11", 140.0), (now - 7200, HOT, "5FUH8krjU3", 458.4)],
+                sells=[(now - 2700, "5FUH8krjU3", 63, 193.9)])
+
+    async def go():
+        assert await f.check("5Gb23Q7n11", None, 50.0, netuid=53) is None     # the bot's money is not an exchange's
+        assert await f.check("5FUH8krjU3", OWNER, 100.0, netuid=63) is None   # sold SN63 45 minutes ago: a trader
+        assert (await f.check("5FUH8krjU3", None, 100.0, netuid=39))[0] == "exchange"   # another subnet: still counts
+    asyncio.run(go())
 
 
 if __name__ == "__main__":

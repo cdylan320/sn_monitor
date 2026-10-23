@@ -294,7 +294,7 @@ class App:
         """One wallet bought ≥ NEWS_BUYBACK_BIG_TAO of subnet `n`: a buyback when its money is the owner's or an exchange's
         (funding.Funding.check — the user's rule, 23 Oct)."""
         try:
-            hit = await self.funding.check(cold, owner, tao)
+            hit = await self.funding.check(cold, owner, tao, netuid=n)
             if hit is None:
                 return
             how, detail = hit
@@ -311,7 +311,9 @@ class App:
             sub = AsyncSubstrateInterface(self.cfg.archive_endpoint, ss58_format=42)
             await sub.initialize()
             head = await sub.get_block_number(None)
-            start = max(log_.last_block + 1, head - blocks)
+            sells_too = not log_.has_sells()      # the sells came later (23 Oct): fill them in once, for the same day
+            start = head - blocks if sells_too else max(log_.last_block + 1, head - blocks)
+            covered = log_.last_block if sells_too else 0      # transfers up to here are stored already
             if start >= head - 2:
                 return
             t0, sem, done = time.time(), asyncio.Semaphore(6), 0
@@ -322,17 +324,23 @@ class App:
                     for attempt in range(3):
                         try:
                             h = await sub.get_block_hash(b)
-                            rows = []
+                            rows, sold = [], []
                             for e in await sub.get_events(h):
                                 ev = (e if isinstance(e, dict) else e.value).get("event", e)
                                 if ev.get("module_id") == "Balances" and ev.get("event_id") == "Transfer":
                                     a = ev.get("attributes")
                                     s_, d_, amt = (a.get("from"), a.get("to"), a.get("amount")) if isinstance(a, dict) else tuple(a)[:3]
                                     rows.append((str(s_), str(d_), int(amt or 0) / RAO))
+                                elif ev.get("module_id") == "SubtensorModule" and ev.get("event_id") == "StakeRemoved":
+                                    cold, _h, tao_, _a, net, *_ = ev["attributes"]
+                                    sold.append((str(cold), int(net), int(tao_) / RAO))
                             ts = time.time() - (head - b) * BLOCK_SECONDS
                             kept = [(b, ts, s_, d_, t_) for s_, d_, t_ in rows if log_.keep(s_, d_, t_)]
-                            if kept:
+                            if kept and b > covered:
                                 log_.db.executemany("INSERT INTO transfers VALUES (?, ?, ?, ?, ?)", kept)
+                            gone = [(c, n_, ts, t_) for c, n_, t_ in sold if t_ >= 1.0]
+                            if gone:
+                                log_.db.executemany("INSERT INTO sells VALUES (?, ?, ?, ?)", gone)
                             done += 1
                             return
                         except Exception:
@@ -373,7 +381,7 @@ class App:
             asyncio.create_task(self.subnets.on_events(block.number, life))
         if self.funding is not None and block.number not in self.trades_failed:
             try:
-                self.funding.log.add(block.number, time.time(), moved)
+                self.funding.log.add(block.number, time.time(), moved, [(t.coldkey, t.netuid, t.tao) for t in tr if not t.buy])
             except Exception as e:
                 log.debug("transfer log #%d: %s", block.number, e)
         if self.cfg.news_buybacks and (tr or burns):
