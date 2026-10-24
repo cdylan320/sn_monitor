@@ -51,8 +51,10 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
   ("it may be the owner buying back"), NOT sent to the bots (user's call, 23 Oct) — `snmon/funding.py`, transfers and
   sells kept 7 days in `data/transfers.db`.
 - Discord: a user account's token (`NEWS_DISCORD_TOKEN`, now vic_x.; the first one was removed from the server on 21 Oct).
-- Every post is judged before it goes to the bots (`snmon/judge.py`): gpt-6.1-sol ×2 raced + gpt-6-luna, whose
-  "important" goes out at once. const is never left to the AI: everything he writes in a subnet's Discord channel (by his
+- Every post is judged before it goes to the bots (`snmon/judge.py`): gpt-6.1-sol ×2 raced (the fast gpt-6-luna is off
+  since 24 Oct — overruled 13×). STRICT since 24 Oct (user: "really important news only"): a launch live now, funding,
+  revenue / named customer, a well-known partner, a major listing, buyback / burn / emission cut, a sale, a record;
+  NOT ads for existing products, usage figures, competition rounds / results, testnet, "coming soon", uploads. const is never left to the AI: everything he writes in a subnet's Discord channel (by his
   user id, `NEWS_CONST_DISCORD_IDS`), his X posts / reposts / replies, and a subnet quoting or sharing him = important.
   A subnet's own X account's post / quote (its owner) is judged by the AI like any other (the user's call, 23 Oct;
   `NEWS_X_SUBNET_IMPORTANT=true` would make it always important).

@@ -32,29 +32,35 @@ FAST_MODEL = "openai/gpt-6-luna"
 CATEGORIES = ["launch", "progress", "funding", "revenue", "partnership", "listing", "tokenomics", "other", "none"]
 
 SYSTEM = """You judge news about one Bittensor subnet for a trading bot. The bot buys the subnet's token the moment \
-important news appears and sells within minutes, so "important" means news that can make buyers act now.
+important news appears and sells within minutes, so "important" means news that would make MANY traders buy this token \
+within minutes. That is rare: far fewer than 1 post in 10 is important. When in doubt, it is NOT important.
 
-Two rules, both apply:
-1. These ALWAYS count as important when they are new and concrete (the categories to answer with):
-- launch: a product, app, model, feature or mainnet / major version that is released or live now
-- progress: a big measurable milestone — a record, a benchmark beaten, usage or growth numbers
-- funding: money raised, a new investor or backer, a grant
-- revenue: revenue or income numbers, paying customers, contracts or commercial deals signed
-- partnership: a partnership or integration with a notable company or project
-- listing: listed on an exchange or a major platform
+Important only when it is NEW, CONCRETE and happening NOW (the categories to answer with):
+- launch: a new product, app or mainnet that is released and live today (not testnet, not "coming soon", not a date
+  in the future, not a model or code uploaded to a repo, not a new competition round or challenge)
+- funding: money raised with an amount or a named investor, or a grant from a well-known organisation
+- revenue: revenue numbers, a named paying customer, or a signed commercial contract
+- partnership: a partnership or integration with a WELL-KNOWN company or project (big tech, a major AI lab, a top crypto
+  project or exchange) — not small ecosystem, creator or community collaborations
+- listing: listed on a major exchange
 - tokenomics: a buyback, a burn, or the owner / team cutting their own emissions or selling less
-2. Beyond these, use your own judgment: any other NEW, CONCRETE news that can move the token's price now is important
-   too — answer "other". Do not miss important news just because it is not in the list above.
+- progress: only an outstanding first — a record that beats the big labs or the whole industry, confirmed by others
+- other: a rare event of the same weight, e.g. the subnet being acquired or sold to a new owner
 
-Usually NOT important (unless it carries real news like the above):
-- replies or answers to users, support, bug reports and fixes, maintenance, downtime
-- instructions for miners or validators, competition rules, scores, weights, routine dev or weekly updates
-- reminders, recaps, quarterly summaries restating known facts, re-shares of older posts
-- events, AMAs, spaces, podcasts, hiring, memes, greetings, vague hype or teasers ("big things coming")
+NOT important, however it is worded:
+- marketing or promotion of a product that already exists: speed, price, quality, "faster / cheaper / better than
+  competitors", referral or "earn" programs, side hustles, calls to use or try the product
+- usage, traffic or growth figures (tokens processed, requests, users, decisions per second), milestones of that kind
+- competition and challenge news: new rounds, challenges, scores, champions, benchmarks of miners' submissions, rules,
+  evaluation changes, leaderboards
+- testnet releases, plans, roadmaps, upcoming or scheduled launches and changes, teasers, "big things coming"
+- research results, papers, model or dataset uploads, demos
+- recruiting miners, validators or GPU providers; capacity or demand claims
+- replies, support, bug fixes, maintenance, downtime, instructions, routine dev or weekly updates
+- reminders, recaps, summaries of known facts, re-shares of older posts, events, AMAs, spaces, podcasts, hiring, memes
 
 If the shared X post is older than a few hours, the market already knows it: not important.
-Answer with the category of the news ("other" for important news outside the examples, "none" when it is not \
-important), and a reason of at most 15 words."""
+Answer with the category ("none" when it is not important) and a reason of at most 15 words."""
 
 SCHEMA = {
     "type": "object",

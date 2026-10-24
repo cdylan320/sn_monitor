@@ -178,10 +178,15 @@ def test_with_an_openrouter_key_the_judge_asks_openrouter_for_a_json_answer_and_
 
 
 
-def test_the_typical_news_always_counts_and_the_model_judges_anything_else_too():
+def test_only_really_important_news_counts_ads_usage_figures_and_competition_news_do_not():
+    # 24 Oct: lium.io's ad ("8xH100 rental configured within 12 seconds", +0.00% after 5 min) was judged "important" and
+    # traded; on 2 days of posts the strict wording turned all 13 "important" calls to not important, 8 real news stayed
     from snmon.judge import CATEGORIES, SYSTEM
-    assert "ALWAYS count as important" in SYSTEM and "use your own judgment" in SYSTEM and '"other"' in SYSTEM
-    assert "Do not miss important news just because it is not in the list" in SYSTEM
+    assert "When in doubt, it is NOT important" in SYSTEM and "far fewer than 1 post in 10" in SYSTEM
+    for word in ("marketing or promotion", "usage, traffic or growth figures", "competition and challenge news",
+                 "testnet releases", "model or dataset uploads"):
+        assert word in SYSTEM
+    assert "Do not miss important news" not in SYSTEM
     assert "other" in CATEGORIES
     v = NewsJudge._verdict(json.dumps({"important": True, "category": "other", "reason": "the founder joins OpenAI"}))
     assert v.important and v.category == "other"                  # important news outside the examples is traded
