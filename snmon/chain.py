@@ -79,11 +79,13 @@ def aura_slot_time(h: dict) -> float | None:
 
 
 def decode_prices(raw: bytes) -> dict[int, int]:
-    """Vec<(NetUid u16, price u64 rao-per-alpha)>."""
+    """Vec<(NetUid u16, price u64 rao-per-alpha)> — without slots that hold no subnet. The chain prices a slot whose
+    subnet is not a dynamic one at exactly 1 τ (swap pallet current_price: mechanism ≠ 1 → 1): root, and an empty slot
+    between a removal and the next registration (SN70, 26 Oct: 0.000398 → "1.0000 τ", a +251,093% pump alert)."""
     n, off = compact_decode(raw)
     if len(raw) - off != 10 * n:
         raise ValueError(f"unexpected price payload: {n} items in {len(raw) - off} bytes")
-    return dict(struct.iter_unpack("<HQ", raw[off:]))
+    return {net: p for net, p in struct.iter_unpack("<HQ", raw[off:]) if net == 0 or p != RAO}
 
 
 # ── Feed ─────────────────────────────────────────────────────────────────────

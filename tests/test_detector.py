@@ -142,6 +142,17 @@ def test_trend_change():
     assert abs(d.change(1, 25) - 10.0) < 1e-6
 
 
+
+def test_a_slot_without_a_subnet_is_not_priced_at_1_tau():
+    # 26 Oct, SN70: between the removal and the next registration the chain priced the empty slot at exactly 1 τ (not a
+    # dynamic subnet) → a "+251,093%" pump alert. Root (0) keeps its 1 τ.
+    import struct
+    from snmon.chain import decode_prices
+    rows = [(0, 1_000_000_000), (5, 9_555_000), (70, 1_000_000_000)]
+    raw = bytes([len(rows) << 2]) + b"".join(struct.pack("<HQ", n, p) for n, p in rows)
+    assert decode_prices(raw) == {0: 1_000_000_000, 5: 9_555_000}
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

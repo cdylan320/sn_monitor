@@ -238,6 +238,19 @@ def test_a_new_identity_or_owner_tells_the_news_monitor_to_look_for_the_x_accoun
     asyncio.run(go())
 
 
+
+def test_a_new_subnet_names_the_subnet_removed_from_its_slot_not_itself():
+    # 26 Oct, SN70: "Consted 2.0" removed at 01:37:50, "ghayn" registered at 01:40:24 — the card said "takes the slot of
+    # ghayn": the view had already been refreshed with the newcomer when the NetworkAdded event came
+    async def go():
+        w, meta = watch(BASE)
+        newcomer = sub(116, "ghayn", owner=NEW_OWNER, reg=9364303)
+        w._gone[116] = (BASE[116], time.time() - 150)                       # "for sale" was removed 2.5 minutes ago
+        await w._ev_NetworkAdded((116, 1), {**BASE, 116: newcomer}, {**BASE, 116: newcomer}, 9364303)
+        assert heads(w)[-1] == "🆕 **NEW SUBNET** · **SN116 ghayn** registered — takes the slot of “for sale”"
+    asyncio.run(go())
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

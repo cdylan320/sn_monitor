@@ -159,9 +159,15 @@ class SubnetWatch:
 
     async def _ev_NetworkAdded(self, a, old, new, block) -> None:
         n = int(pick(a, 0, "netuid"))
+        info = new.get(n)
+        # the subnet REMOVED from this slot first: the view before this event may already hold the newcomer (SN70, 26 Oct:
+        # "takes the slot of ghayn" — the newcomer's own name — instead of "Consted 2.0")
         gone = self._gone.get(n)
-        prev = old.get(n) or (gone[0] if gone and time.time() - gone[1] < 7 * 86400 else None)
-        await self._added(n, prev, new.get(n), block)
+        was = old.get(n)
+        if was is not None and info is not None and was.registered_at == info.registered_at:
+            was = None
+        prev = (gone[0] if gone and time.time() - gone[1] < 7 * 86400 else None) or was
+        await self._added(n, prev, info, block)
 
     async def _added(self, n: int, prev: SubnetInfo | None, info: SubnetInfo | None, block: int | None) -> None:
         if self._seen("added", n):
