@@ -246,7 +246,7 @@ def load() -> Config:
         news_ai_model=(os.getenv("NEWS_AI_MODEL") or "").strip(),   # empty: the provider's default (judge.DEFAULT_MODEL)
         news_ai_timeout=_float("NEWS_AI_TIMEOUT", 8.0),
         news_ai_race=int(_float("NEWS_AI_RACE", 2)),
-        news_ai_fast_model=(os.getenv("NEWS_AI_FAST_MODEL", "") or "").strip(),    # off since 24 Oct (it was overruled 13×)
+        news_ai_fast_model=(os.getenv("NEWS_AI_FAST_MODEL", "openai/gpt-6-luna") or "").strip(),
         news_feed_port=_int("NEWS_FEED_PORT", 0),
         news_feed_token=(os.getenv("NEWS_FEED_TOKEN") or "").strip(),
     )

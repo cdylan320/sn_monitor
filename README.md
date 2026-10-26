@@ -284,8 +284,8 @@ OpenRouter when `OPENROUTER_API_KEY` is set (default `openai/gpt-6.1-sol` with l
 directly with `ANTHROPIC_API_KEY` (`NEWS_AI_MODEL` picks another model); otherwise, or when it does not answer in
 `NEWS_AI_TIMEOUT` seconds, keyword rules do. The bots wait for the verdict, so `NEWS_AI_RACE` (2) identical requests go
 at once and the first answer is used (21 Oct: median 2.9 → 2.4 s, slowest 5.7 → 4.1 s). A fast model
-(`NEWS_AI_FAST_MODEL`, e.g. `openai/gpt-6-luna`, ~1.3 s) can be asked at the same time, its "important" sent at once — off
-since 24 Oct: it called routine posts important. **Strict since 24 Oct:** only news that would make many traders buy
+(`NEWS_AI_FAST_MODEL`, `openai/gpt-6-luna`, ~1.1 s) is asked at the same time: its "important" goes to the bots at once,
+its "not important" waits for the main model. **Strict since 24 Oct:** only news that would make many traders buy
 within minutes — a launch live now, funding with an amount or a known investor, revenue / a named customer, a partnership
 with a well-known company, a major listing, a buyback / burn / emission cut, a sale of the subnet, an outstanding record.
 Ads for existing products, usage figures, competition rounds and results, testnet, "coming soon", uploads, recruiting
