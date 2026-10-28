@@ -289,9 +289,10 @@ at once and the first answer is used (21 Oct: median 2.9 → 2.4 s, slowest 5.7 
 (`NEWS_AI_FAST_MODEL`, `openai/gpt-6-luna`, ~1.1 s) is asked at the same time: its "important" goes to the bots at once,
 its "not important" waits for the main model. **Strict since 24 Oct:** only news that would make many traders buy
 within minutes — a launch live now, funding with an amount or a known investor, revenue / a named customer, a partnership
-with a well-known company, a major listing, a buyback / burn / emission cut, a sale of the subnet, an outstanding record.
-Ads for existing products, usage figures, competition rounds and results, testnet, "coming soon", uploads, recruiting
-are not; when in doubt, not important. (Tested on 2 days of posts: the 13 called important before → 0; 8 real news → 8.) The verdict and its reason are on the card ("News check") and travel with
+with a well-known company, a NEW deal with another subnet (28 Oct: SN25 "has launched an open competition on
+@Apex_SN1" to improve its own code — its first announcement only), a major listing, a buyback / burn / emission cut, a
+sale of the subnet, an outstanding record. Ads for existing products, usage figures, a subnet's own competition rounds
+and results, testnet, "coming soon", uploads, recruiting are not; when in doubt, not important. (Tested on 2 days of posts: the 13 called important before → 0; 8 real news → 8.) The verdict and its reason are on the card ("News check") and travel with
 the news to the bots, which trade only important news. (21 Oct: 2 of the bots' 21 news trades made money.)
 
 **Account:** a separate alt account that's a member of the server. Its token goes in

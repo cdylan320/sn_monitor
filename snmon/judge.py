@@ -43,7 +43,10 @@ Important only when it is NEW, CONCRETE and happening NOW (the categories to ans
 - funding: money raised with an amount or a named investor, or a grant from a well-known organisation
 - revenue: revenue numbers, a named paying customer, or a signed commercial contract
 - partnership: a partnership or integration with a WELL-KNOWN company or project (big tech, a major AI lab, a top crypto
-  project or exchange) — not small ecosystem, creator or community collaborations
+  project or exchange) — not small ecosystem, creator or community collaborations. Also a NEW deal between two Bittensor
+  subnets: the subnet putting its own product to work on another subnet (e.g. "has launched an open competition on
+  @Apex_SN1" to improve its own code, paid in that subnet's alpha) or another subnet starting to use it — only the FIRST
+  announcement of the deal (it counts even when it starts within a day), not its later rounds, results or reminders
 - listing: listed on a major exchange
 - tokenomics: a buyback, a burn, or the owner / team cutting their own emissions or selling less
 - progress: only an outstanding first — a record that beats the big labs or the whole industry, confirmed by others
@@ -53,8 +56,8 @@ NOT important, however it is worded:
 - marketing or promotion of a product that already exists (no new release in the post): speed, price, quality,
   "faster / cheaper / better than competitors", referral or "earn" programs, side hustles, calls to use or try it
 - usage, traffic or growth figures (tokens processed, requests, users, decisions per second), milestones of that kind
-- competition and challenge news: new rounds, challenges, scores, champions, benchmarks of miners' submissions, rules,
-  evaluation changes, leaderboards
+- competition and challenge news of the subnet's own miners: new rounds, challenges, scores, champions, benchmarks of
+  miners' submissions, rules, evaluation changes, leaderboards (but a deal with another subnet, above, is important)
 - testnet releases, plans, roadmaps, upcoming or scheduled launches and changes, teasers, "big things coming"
 - research results, papers, model or dataset uploads, demos
 - recruiting miners, validators or GPU providers; capacity or demand claims
