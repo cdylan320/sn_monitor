@@ -275,7 +275,7 @@ def test_a_subnet_whose_owner_changed_is_looked_at_again_even_with_the_same_webs
 
 
 
-def test_two_looks_of_one_account_may_overlap_so_a_slow_look_does_not_skip_its_next_turn():
+def test_looks_of_one_account_may_overlap_so_a_slow_look_does_not_skip_its_next_turn():
     # 28 Oct: one look at a time, a look taking ~2.3 s (more with retries) — at 20 turns a second each account was looked
     # at every ~7 s, not every ~4
     async def go():
@@ -296,7 +296,7 @@ def test_two_looks_of_one_account_may_overlap_so_a_slow_look_does_not_skip_its_n
         task = asyncio.create_task(m._subnet_x_poll_loop(None, Accounts(), rate=100.0))
         await asyncio.sleep(0.3)
         task.cancel()
-        assert most["vidaio_"] == xsubnets_news.SUBNET_X_INFLIGHT == 2
+        assert most["vidaio_"] == xsubnets_news.SUBNET_X_INFLIGHT == 3
     asyncio.run(go())
 
 

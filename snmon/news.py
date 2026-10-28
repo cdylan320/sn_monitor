@@ -84,8 +84,9 @@ ANNOUNCE, XPOST, TEAM = "announcement", "x_post", "team"
 X_TIMELINE = "https://api.fxtwitter.com/2/profile/{}/statuses"
 X_SUBNET_MAX_AGE_S = 600   # a subnet's post older than this when first seen (posted while the monitor was down) is not news
 X_SUBNET_RETRIES = 2       # a failed look at a subnet's account is tried again at once, this many times
-SUBNET_X_INFLIGHT = 2      # looks at one subnet account running at the same time (what one sees is recorded before
-                           # any await, so two never post the same post)
+SUBNET_X_INFLIGHT = 3      # looks at one subnet account running at the same time (what one sees is recorded before
+                           # any await, so two never post the same post); a look with 2 retries takes ~7.5 s, so with
+                           # 2 a quarter of the turns were still skipped (28 Oct: an account every ~6.3 s, not ~4.2)
 # X search for a subnet sold (any account; the user's X login): words that say it, and the subnet's number in the post
 ACQ_QUERY = ('(acquired OR acquires OR acquisition OR "new owner" OR "new owners" OR "took over" OR "taken over" '
              'OR "new home") (bittensor OR subnet OR tao)')
@@ -692,7 +693,7 @@ class NewsMonitor:
         """Watch every subnet's own X account (found by xsubnets.SubnetAccounts): its post is news the moment it is
         seen — the Discord share comes minutes later (20 Oct: @vidaio_ posted at 15:03, it was shared in #85 at 15:04
         while bots were already buying SN85). One account after another, `rate` timeline requests a second in all
-        (16/s, 2 looks of an account may overlap: ~68 accounts, each every ~4.2 s — 21 Oct, SN54's post waited 11 s at 6/s;
+        (16/s, 3 looks of an account may overlap: ~68 accounts, each every ~4.2 s — 21 Oct, SN54's post waited 11 s at 6/s;
         28 Oct, SN46's 3.2 s at 12/s). Its own posts and quotes count; replies (its thread's next parts too)
         and reposts are chatter. The handles are looked up again every hour for the subnets that are due."""
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8),
