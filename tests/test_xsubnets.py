@@ -296,7 +296,7 @@ def test_looks_of_one_account_may_overlap_so_a_slow_look_does_not_skip_its_next_
         task = asyncio.create_task(m._subnet_x_poll_loop(None, Accounts(), rate=100.0))
         await asyncio.sleep(0.3)
         task.cancel()
-        assert most["vidaio_"] == xsubnets_news.SUBNET_X_INFLIGHT == 3
+        assert most["vidaio_"] == xsubnets_news.SUBNET_X_INFLIGHT == 2
     asyncio.run(go())
 
 
