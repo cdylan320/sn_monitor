@@ -230,7 +230,7 @@ def load() -> Config:
         news_x_subnet_important=_bool("NEWS_X_SUBNET_IMPORTANT", False),
         news_x_poll_seconds=_float("NEWS_X_POLL_SECONDS", 0.5),
         news_x_subnets=_bool("NEWS_X_SUBNETS", True),
-        news_x_subnet_rate=_float("NEWS_X_SUBNET_RATE", 20.0),
+        news_x_subnet_rate=_float("NEWS_X_SUBNET_RATE", 16.0),
         news_x_subnet_handles=_handles("NEWS_X_SUBNET_HANDLES"),
         news_x_list=_bool("NEWS_X_LIST", False),
         news_x_list_seconds=_float("NEWS_X_LIST_SECONDS", 2.0),

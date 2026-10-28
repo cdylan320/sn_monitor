@@ -84,6 +84,8 @@ ANNOUNCE, XPOST, TEAM = "announcement", "x_post", "team"
 X_TIMELINE = "https://api.fxtwitter.com/2/profile/{}/statuses"
 X_SUBNET_MAX_AGE_S = 600   # a subnet's post older than this when first seen (posted while the monitor was down) is not news
 X_SUBNET_RETRIES = 2       # a failed look at a subnet's account is tried again at once, this many times
+SUBNET_X_INFLIGHT = 2      # looks at one subnet account running at the same time (what one sees is recorded before
+                           # any await, so two never post the same post)
 # X search for a subnet sold (any account; the user's X login): words that say it, and the subnet's number in the post
 ACQ_QUERY = ('(acquired OR acquires OR acquisition OR "new owner" OR "new owners" OR "took over" OR "taken over" '
              'OR "new home") (bittensor OR subnet OR tao)')
@@ -686,11 +688,12 @@ class NewsMonitor:
 
     # ── every subnet's own X account ─────────────────────────────────────
 
-    async def subnet_x_loop(self, accounts, rate: float = 20.0) -> None:
+    async def subnet_x_loop(self, accounts, rate: float = 16.0) -> None:
         """Watch every subnet's own X account (found by xsubnets.SubnetAccounts): its post is news the moment it is
         seen — the Discord share comes minutes later (20 Oct: @vidaio_ posted at 15:03, it was shared in #85 at 15:04
         while bots were already buying SN85). One account after another, `rate` timeline requests a second in all
-        (20/s: ~68 accounts, each every ~4 s — 21 Oct, SN54's post waited 11 s at 6/s; 28 Oct, SN46's 3.2 s at 12/s). Its own posts and quotes count; replies (its thread's next parts too)
+        (16/s, 2 looks of an account may overlap: ~68 accounts, each every ~4.2 s — 21 Oct, SN54's post waited 11 s at 6/s;
+        28 Oct, SN46's 3.2 s at 12/s). Its own posts and quotes count; replies (its thread's next parts too)
         and reposts are chatter. The handles are looked up again every hour for the subnets that are due."""
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8),
                                          headers={"User-Agent": "Mozilla/5.0 sn-monitor"}) as session:
@@ -699,7 +702,7 @@ class NewsMonitor:
     async def _subnet_x_poll_loop(self, session, accounts, rate: float, refresh_every: float = 3600.0) -> None:
         turn = 0
         self._x_accounts = accounts
-        looks: dict[str, asyncio.Task] = {}
+        looks: dict[str, set[asyncio.Task]] = {}
         try:
             while True:
                 if time.time() >= self._x_refresh_at and self.meta.subnets:
@@ -713,13 +716,18 @@ class NewsMonitor:
                 if order and time.time() >= self._x_pause_until:
                     key = order[turn % len(order)]
                     turn += 1
-                    if key not in looks or looks[key].done():
+                    group = looks.setdefault(key, set())
+                    group -= {t for t in group if t.done()}
+                    # a look takes ~2.3 s (longer with fxtwitter's retries): with one at a time the account's next turn
+                    # was skipped while it ran (28 Oct: 20 turns a second gave each account a look every ~7 s, not ~4)
+                    if len(group) < SUBNET_X_INFLIGHT:
                         handle, netuids = watch[key]
-                        looks[key] = asyncio.create_task(self._subnet_x_look(session, handle, netuids))
+                        group.add(asyncio.create_task(self._subnet_x_look(session, handle, netuids)))
                 await asyncio.sleep(1.0 / max(rate, 0.1))
         finally:
-            for t in looks.values():
-                t.cancel()
+            for group in looks.values():
+                for t in group:
+                    t.cancel()
             if self._x_discovery is not None:
                 self._x_discovery.cancel()
 

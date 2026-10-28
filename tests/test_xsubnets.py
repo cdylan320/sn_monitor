@@ -274,6 +274,35 @@ def test_a_subnet_whose_owner_changed_is_looked_at_again_even_with_the_same_webs
     assert 85 in acc.due({85: SUBNETS[85]})
 
 
+
+def test_two_looks_of_one_account_may_overlap_so_a_slow_look_does_not_skip_its_next_turn():
+    # 28 Oct: one look at a time, a look taking ~2.3 s (more with retries) — at 20 turns a second each account was looked
+    # at every ~7 s, not every ~4
+    async def go():
+        m = nm()
+        running, most = {}, {}
+
+        async def look(session, handle, netuids):
+            running[handle] = running.get(handle, 0) + 1
+            most[handle] = max(most.get(handle, 0), running[handle])
+            await asyncio.sleep(0.05)                          # slower than the account's next turn
+            running[handle] -= 1
+        m._subnet_x_look = look
+        m._x_refresh_at = time.time() + 3600                  # no lookup of the accounts in this test
+
+        class Accounts:
+            def accounts(self):
+                return {"vidaio_": ("vidaio_", {85})}
+        task = asyncio.create_task(m._subnet_x_poll_loop(None, Accounts(), rate=100.0))
+        await asyncio.sleep(0.3)
+        task.cancel()
+        assert most["vidaio_"] == xsubnets_news.SUBNET_X_INFLIGHT == 2
+    asyncio.run(go())
+
+
+from snmon import news as xsubnets_news  # noqa: E402
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):
