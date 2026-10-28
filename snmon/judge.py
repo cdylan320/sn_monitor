@@ -36,8 +36,10 @@ important news appears and sells within minutes, so "important" means news that 
 within minutes. That is rare: far fewer than 1 post in 10 is important. When in doubt, it is NOT important.
 
 Important only when it is NEW, CONCRETE and happening NOW (the categories to answer with):
-- launch: a new product, app or mainnet that is released and live today (not testnet, not "coming soon", not a date
-  in the future, not a model or code uploaded to a repo, not a new competition round or challenge)
+- launch: a new product, app, API, portal or mainnet that is released and live today ("NEW RELEASE", "is live now",
+  "launched today") — it counts even when the same post also promotes it (free credits, sign-ups, a demo) — but not
+  testnet, not "coming soon", not a date in the future, not a model or code uploaded to a repo, not a new competition
+  round or challenge
 - funding: money raised with an amount or a named investor, or a grant from a well-known organisation
 - revenue: revenue numbers, a named paying customer, or a signed commercial contract
 - partnership: a partnership or integration with a WELL-KNOWN company or project (big tech, a major AI lab, a top crypto
@@ -48,8 +50,8 @@ Important only when it is NEW, CONCRETE and happening NOW (the categories to ans
 - other: a rare event of the same weight, e.g. the subnet being acquired or sold to a new owner
 
 NOT important, however it is worded:
-- marketing or promotion of a product that already exists: speed, price, quality, "faster / cheaper / better than
-  competitors", referral or "earn" programs, side hustles, calls to use or try the product
+- marketing or promotion of a product that already exists (no new release in the post): speed, price, quality,
+  "faster / cheaper / better than competitors", referral or "earn" programs, side hustles, calls to use or try it
 - usage, traffic or growth figures (tokens processed, requests, users, decisions per second), milestones of that kind
 - competition and challenge news: new rounds, challenges, scores, champions, benchmarks of miners' submissions, rules,
   evaluation changes, leaderboards

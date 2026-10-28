@@ -248,7 +248,7 @@ automatically — the X account the subnet's website links most (else its GitHub
 X profile points back to the subnet (its website, "SN85" in the bio, or its name). 61 of 128 subnets had one on 20 Oct;
 `NEWS_X_SUBNET_HANDLES=72:NATIXNetwork,21:-` adds or corrects them by hand. A subnet whose identity or owner changes
 on chain (sold, renamed, new website) gets its X account looked up again at once. They are looked at one after another,
-`NEWS_X_SUBNET_RATE` (12) requests a second in all — each about every 5.5 s; a failed look (the free API fails ~40% of
+`NEWS_X_SUBNET_RATE` (20) requests a second in all — each about every 4 s; a failed look (the free API fails ~40% of
 requests) is tried again at once, up to 2 times. A subnet's own post or quote becomes a card
 and goes to the trading bots at once (kind `x_subnet`); a later share of it in Discord is not reported again.
 With an X login (`X_AUTH_TOKEN` / `X_CT0`, the x.com cookies), all those accounts are also read in **one** request: a

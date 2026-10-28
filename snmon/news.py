@@ -686,11 +686,11 @@ class NewsMonitor:
 
     # ── every subnet's own X account ─────────────────────────────────────
 
-    async def subnet_x_loop(self, accounts, rate: float = 12.0) -> None:
+    async def subnet_x_loop(self, accounts, rate: float = 20.0) -> None:
         """Watch every subnet's own X account (found by xsubnets.SubnetAccounts): its post is news the moment it is
         seen — the Discord share comes minutes later (20 Oct: @vidaio_ posted at 15:03, it was shared in #85 at 15:04
         while bots were already buying SN85). One account after another, `rate` timeline requests a second in all
-        (12/s: ~65 accounts, each every ~5.5 s — 21 Oct, SN54's post waited 11 s at 6/s). Its own posts and quotes count; replies (its thread's next parts too)
+        (20/s: ~68 accounts, each every ~4 s — 21 Oct, SN54's post waited 11 s at 6/s; 28 Oct, SN46's 3.2 s at 12/s). Its own posts and quotes count; replies (its thread's next parts too)
         and reposts are chatter. The handles are looked up again every hour for the subnets that are due."""
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8),
                                          headers={"User-Agent": "Mozilla/5.0 sn-monitor"}) as session:
