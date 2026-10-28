@@ -57,6 +57,7 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
   revenue / named customer, a well-known partner, a major listing, buyback / burn / emission cut, a sale, a record;
   NOT ads for existing products, usage figures, competition rounds / results, testnet, "coming soon", uploads. const is never left to the AI: everything he writes in a subnet's Discord channel (by his
   user id, `NEWS_CONST_DISCORD_IDS`), his X posts / reposts / replies, and a subnet quoting or sharing him = important.
+  Not in SN120 / SN3's channels (`NEWS_CONST_CHAT_NETUIDS`, 28 Oct): he chats there, so he is scored like the team, AI-judged.
   A subnet's own X account's post / quote (its owner) is judged by the AI like any other (the user's call, 23 Oct;
   `NEWS_X_SUBNET_IMPORTANT=true` would make it always important).
 

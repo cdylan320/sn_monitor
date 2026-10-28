@@ -156,6 +156,7 @@ class NewsMonitor:
         self.news_feed = None       # NewsFeed: news events for the trading bots (set by the app when NEWS_FEED_PORT is on)
         self.judge = None           # NewsJudge: is a post important news? (set by the app)
         self.const_ids: set[str] = set()   # const's Discord user id(s): all he posts is news, always important (set by the app)
+        self.const_chat: set[int] = set()  # … but not in these subnets' channels (SN120, SN3): he chats there all day
         self.const_x: set[str] = set()     # … and his X account(s), lowercase (NEWS_X_ACCOUNTS)
         self.owner_important = False       # a subnet's own X account's post always important? (NEWS_X_SUBNET_IMPORTANT;
                                            # off since 23 Oct, the user's call: the AI judges it like any other post)
@@ -365,15 +366,17 @@ class NewsMonitor:
             return None
         content = m.get("content") or ""
         bot = m["author"].get("bot")
-        if not bot and m["author"]["id"] in self.const_ids:
+        const = not bot and m["author"]["id"] in self.const_ids
+        if const and ch.netuid not in self.const_chat:
             # const's every word in a subnet's channel is news — "go ingot", "Nice work", an image (SN97, 22 Oct) —
             # matched by his user id, never by name (others call themselves "const" too)
             return (ANNOUNCE if m.get("mention_everyone") else TEAM), "const"
-        who = None if bot else self.is_team(m["author"]["id"], ch)
+        # in SN120 / SN3 he chats all day ("since thats at least fair", 28 Oct): there he is scored like the team
+        who = "const" if const else None if bot else self.is_team(m["author"]["id"], ch)
         if m.get("mention_everyone") and not bot:
             return ANNOUNCE, who
         just_link = len(URL_RE.sub("", content).strip()) < 25
-        bar = NEWS_SCORE if who == "team" else STAFF_SCORE
+        bar = NEWS_SCORE if who in ("team", "const") else STAFF_SCORE
         if who and not (X_RE.search(content) and just_link) and self.score(m, ch) >= bar:
             return TEAM, who
         if X_RE.search(content):
@@ -546,7 +549,7 @@ class NewsMonitor:
         x = X_RE.search(m.get("content") or "")
         tw = await self.tweet(x.group(0)) if x else None       # the judge reads the X post it shares too
         text = self._clean(m)
-        if who == "const":
+        if who == "const" and ch.netuid not in self.const_chat:   # in his chat channels the AI judges him
             verdict = const_verdict("const posted in the subnet's channel")
         elif x and x.group(1).lower() in self.const_x:
             verdict = const_verdict("a share of const's X post")

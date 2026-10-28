@@ -139,6 +139,7 @@ class Config:
     news_min_team_chars: int
     news_x_accounts: list[str]
     news_const_discord_ids: list[str]   # const's Discord user id(s): all he posts in a subnet's channel is important news
+    news_const_chat_netuids: set[int]   # … except these subnets' channels, where he chats all day: judged like the team there
     news_x_subnet_important: bool       # a subnet's own X account's post / quote is always important (off: the AI judges it)
     news_x_poll_seconds: float
     news_x_subnets: bool          # watch every subnet's own X account (found from its website, checked on its profile)
@@ -227,6 +228,7 @@ def load() -> Config:
         news_min_team_chars=_int("NEWS_MIN_TEAM_CHARS", 120),
         news_x_accounts=[h.lstrip("@") for h in _list("NEWS_X_ACCOUNTS", ("const_reborn",))],
         news_const_discord_ids=_list("NEWS_CONST_DISCORD_IDS", ("389189199514959893",)),
+        news_const_chat_netuids={int(x) for x in _list("NEWS_CONST_CHAT_NETUIDS", ("3", "120")) if x.isdigit()},
         news_x_subnet_important=_bool("NEWS_X_SUBNET_IMPORTANT", False),
         news_x_poll_seconds=_float("NEWS_X_POLL_SECONDS", 0.5),
         news_x_subnets=_bool("NEWS_X_SUBNETS", True),

@@ -274,6 +274,8 @@ be the owner buying back") — the bots do not trade it (`snmon/funding.py`; tra
 **const is always important.** Everything const writes in a subnet's Discord channel is news — even "Nice work" or only
 an image — matched by his user id (`NEWS_CONST_DISCORD_IDS`), never by name. That, his X posts / reposts / replies, and a
 subnet quoting or sharing his X post are always judged important ("News check (const)"), without asking the AI.
+Except in **SN120 and SN3's channels** (`NEWS_CONST_CHAT_NETUIDS=3,120`), where he chats all day: there his messages
+are treated like the team's — short chat is dropped, a real post is judged by the AI.
 A post by a **subnet's own X account** (its owner) is judged by the AI like any other post; `NEWS_X_SUBNET_IMPORTANT=true`
 makes it always important instead ("News check (the subnet's own account)") — off since 23 Oct.
 

@@ -386,6 +386,39 @@ def test_every_const_message_is_news_even_a_short_one_but_not_someone_else_calle
     assert m.classify(fake, CH) is None                                   # the name proves nothing: only the id counts
 
 
+def test_const_chatting_in_sn120_and_sn3_is_not_news_but_his_real_news_there_goes_to_the_ai():
+    # 28 Oct, #120: three cards in a minute, all "important": "We could switch to just latest by registration", …
+    async def go():
+        m = nm()
+        m.const_ids, m.const_chat = {CONST}, {3, 120}
+        ch = Channel("C120", "120・Λffine・Λ", 120)
+        for text in ("We could switch to just latest by registration", "since thats at least fair",
+                     "and the queue will be limited by the normal pay to play system we are all familiar with"):
+            assert m.classify(msg(CONST, text), ch) is None, text
+        assert m.classify(msg(CONST, "Nice work", type=19), CH) == (TEAM, "const")    # any other channel: still news
+        news = msg(CONST, "New release v2.0 is live on mainnet today: validators must update before epoch 500, "
+                          "emissions move to the new scoring at 12:00 UTC, details in the docs")
+        assert m.classify(news, ch) == (TEAM, "const")
+        assert m.classify(msg(CONST, "@everyone big news", mention_everyone=True), ch) == (ANNOUNCE, "const")
+        m.meta.subnets = {120: m.meta.info(120)}
+        m.dry_run, asked = True, []
+
+        class AI:
+            async def judge(self, *a, **k):
+                from snmon.judge import Verdict
+                asked.append(a)
+                return Verdict(True, "launch", "a release live now", "ai")
+            stats = {}
+        m.judge = AI()
+
+        async def send(payload, netuid, p0):
+            pass
+        m._send = send
+        await m._post(news, ch, TEAM, "const")
+        assert asked                                                    # judged by the AI there, not always important
+    asyncio.run(go())
+
+
 def test_consts_posts_are_always_important_without_asking_the_ai_and_go_to_the_bots_as_such():
     async def go():
         m = nm()

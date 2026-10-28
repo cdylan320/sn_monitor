@@ -94,6 +94,7 @@ class App:
             self.news.judge = NewsJudge(cfg.news_ai_model, cfg.news_ai_timeout, race=cfg.news_ai_race,
                                         fast_model=cfg.news_ai_fast_model)
             self.news.const_ids = set(cfg.news_const_discord_ids)
+            self.news.const_chat = set(cfg.news_const_chat_netuids)
             self.news.const_x = {h.lower() for h in cfg.news_x_accounts}
             self.news.owner_important = cfg.news_x_subnet_important
             if self.subnets is not None:     # a subnet's new identity / owner: its X account is looked up again at once
