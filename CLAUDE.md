@@ -92,6 +92,9 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
 - MEV shield: the wrapper's era must be anchored ≥2 blocks behind the head, or the author includes it undecrypted.
   Sealed late in a slot (>6 s) → sealed for the block after (a PendingKey miss locks the nonce ~8 blocks).
 - Every normal transaction has the same priority; a block orders them by arrival.
+- A stake transfer WITHIN one subnet (transfer_stake / move_stake to another wallet or hotkey, a lease payout:
+  `transfer_stake_within_subnet`) emits StakeRemoved + StakeAdded back to back, the same τ and alpha, fee 0 — no swap,
+  no price move. Not a trade: both repos drop such pairs (30 Oct: a wallet gave SN8's owner 39,000 α → a fake buyback).
 - Removal: the non-immune (60 days) subnet with the lowest moving price goes at the next registration (one per 48 h).
 - All node requests share one connection: a failover cancels the others' requests — `node._try` retries them, and every
   trader loop is supervised.

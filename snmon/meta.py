@@ -162,7 +162,8 @@ class Meta:
         life: list[tuple[str, tuple]] = []
         burns: list[tuple[str, tuple]] = []
         moved: list[tuple[str, str, float]] = []
-        for e in events:
+        sold_at = None    # (event index, its (τ, alpha, netuid)) of a StakeRemoved with no fee just read
+        for i, e in enumerate(events):
             ev = e.get("event", e)
             if ev.get("module_id") == "Balances" and ev.get("event_id") == "Transfer":
                 a = ev.get("attributes")
@@ -174,8 +175,19 @@ class Meta:
             name = ev.get("event_id")
             if name in ("StakeAdded", "StakeRemoved"):
                 # (coldkey, hotkey, tao, alpha, netuid, fee) — swaps/moves also emit these
-                cold, _hot, tao, alpha, netuid, *_ = ev["attributes"]
+                cold, _hot, tao, alpha, netuid, *rest = ev["attributes"]
+                free = not rest or not int(rest[0] or 0)
+                key = (int(tao), int(alpha), int(netuid))
+                if name == "StakeAdded" and free and sold_at == (i - 1, key):
+                    # a transfer within one subnet (transfer_stake / move_stake to another wallet or hotkey, a lease
+                    # payout): the chain books it as StakeRemoved + StakeAdded back to back, the same τ and alpha, no fee
+                    # — nothing was swapped, the price did not move. Not a trade (30 Oct: a wallet gave SN8's owner
+                    # 39,000 α — it was posted as "the owner bought 1,246.91 τ", a buyback, and a bot bought behind it)
+                    out.pop()
+                    sold_at = None
+                    continue
                 out.append(Trade(block, int(netuid), name == "StakeAdded", int(tao) / RAO, int(alpha) / RAO, str(cold)))
+                sold_at = (i, key) if name == "StakeRemoved" and free else None
             elif name in LIFECYCLE_EVENTS:
                 life.append((name, ev.get("attributes")))  # a tuple, a dict of named fields, or one bare value
             elif name in BUYBACK_EVENTS:

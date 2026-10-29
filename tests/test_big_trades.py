@@ -73,6 +73,39 @@ def test_one_message_a_block_with_a_card_per_subnet():
     assert app.big_trade_count == 2 and app._names[BOT26][1] == "bot_26"
 
 
+def test_a_stake_transfer_within_a_subnet_is_not_a_trade():
+    # 30 Oct, #9392656: a wallet gave SN8's owner 39,000 α (transfer_stake) — the chain books StakeRemoved + StakeAdded,
+    # the same τ and alpha, no fee; it was posted as "the owner bought 1,246.91 τ" (a buyback) and a big buy + big sell
+    from snmon.meta import Meta
+
+    def ev(name, cold, tao, alpha, netuid, fee=0, module="SubtensorModule"):
+        return {"event": {"module_id": module, "event_id": name, "attributes": (cold, "HOT", tao, alpha, netuid, fee)}}
+
+    events = [ev("StakeRemoved", "5EBzT", 1_246_914_090_583, 39_000 * RAO, 8),
+              ev("StakeAdded", "OWNER8", 1_246_914_090_583, 39_000 * RAO, 8),
+              {"event": {"module_id": "SubtensorModule", "event_id": "StakeTransferred", "attributes": ()}},
+              ev("StakeRemoved", "SELLER", 20 * RAO, 3000 * RAO, 105, 0),          # a real sale with no fee …
+              ev("StakeAdded", "BUYER", 20 * RAO, 3100 * RAO, 105, 0),             # … and a real buy right after
+              ev("StakeRemoved", "A", 5 * RAO, 700 * RAO, 64, 1000),                # same amounts, but fees: trades
+              ev("StakeAdded", "B", 5 * RAO, 700 * RAO, 64, 1000),
+              ev("StakeRemoved", "C", 7 * RAO, 900 * RAO, 9),                       # not back to back: trades
+              {"event": {"module_id": "System", "event_id": "ExtrinsicSuccess", "attributes": ()}},
+              ev("StakeAdded", "D", 7 * RAO, 900 * RAO, 9)]
+
+    class Sub:
+        async def get_events(self, h):
+            return events
+
+    m = Meta.__new__(Meta)
+
+    async def sub():
+        return Sub()
+    m._substrate = sub
+    tr, *_ = asyncio.run(m._trades(9392656, "0x"))
+    assert [(t.netuid, t.buy, t.coldkey) for t in tr] == [(105, False, "SELLER"), (105, True, "BUYER"), (64, False, "A"),
+                                                          (64, True, "B"), (9, False, "C"), (9, True, "D")]
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):
