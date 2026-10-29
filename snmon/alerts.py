@@ -335,6 +335,81 @@ def pending_embed(g: PendingGroup, info: SubnetInfo) -> dict:
     }
 
 
+# ── big trades (landed) ──────────────────────────────────────────────────
+
+@dataclass
+class BigTrade:
+    netuid: int
+    buy: bool
+    tao: float
+    coldkey: str
+    name: str = ""        # the wallet's on-chain name, when it has one
+
+
+def big_trades(trades: list[Trade], sell_min: float, buy_min: float, watched=lambda n: n != 0) -> list[BigTrade]:
+    """One block's big trades: a sell of ≥ sell_min τ, a buy of ≥ buy_min τ (0 = off) — a wallet's trades on one subnet
+    in the block are added up (bots split one order)."""
+    sums: dict[tuple[str, int, bool], float] = {}
+    for t in trades:
+        if t.netuid != 0 and watched(t.netuid):
+            k = (t.coldkey, t.netuid, t.buy)
+            sums[k] = sums.get(k, 0.0) + t.tao
+    out = []
+    for (cold, n, buy), tao in sums.items():
+        bar = buy_min if buy else sell_min
+        if bar > 0 and tao >= bar:
+            out.append(BigTrade(n, buy, tao, cold))
+    return sorted(out, key=lambda b: -b.tao)
+
+
+def _who(b: BigTrade) -> str:
+    return f"{b.name} ({fmt.short(b.coldkey)})" if b.name else fmt.short(b.coldkey)
+
+
+def big_trade_line(b: BigTrade, info: SubnetInfo | None, move: float | None) -> str:
+    """One line per big trade above the cards — what a phone notification shows."""
+    name = info.label if info else f"SN{b.netuid}"
+    icon, verb = ("🟢", "BUY") if b.buy else ("🔴", "SELL")
+    return (f"{icon} **{name}** big {verb} **{fmt.tao(b.tao)} τ** · {b.name or fmt.short(b.coldkey)}"
+            + (f" · {fmt.pct(move)} in the block" if move is not None else ""))
+
+
+def big_trades_embed(rows: list[BigTrade], info: SubnetInfo | None, block: int, before: int | None,
+                     after: int | None, sell_min: float, buy_min: float) -> dict:
+    """One subnet's big trades in one block."""
+    netuid = rows[0].netuid
+    buys, sells = [b for b in rows if b.buy], [b for b in rows if not b.buy]
+    if len(rows) == 1:
+        title = f"{'🟢 BIG BUY' if rows[0].buy else '🔴 BIG SELL'}  ·  {fmt.tao(rows[0].tao)} τ"
+    else:
+        title = "Big trades  ·  " + " · ".join(x for x in (
+            f"{len(buys)} buy{'s' * (len(buys) != 1)} {fmt.tao(sum(b.tao for b in buys))} τ" if buys else "",
+            f"{len(sells)} sell{'s' * (len(sells) != 1)} {fmt.tao(sum(b.tao for b in sells))} τ" if sells else "") if x)
+    lines = [f"{'🟢 **Buy' if b.buy else '🔴 **Sell'} {fmt.tao(b.tao)} τ** · [{_who(b)}]({account_url(b.coldkey)})"
+             for b in rows[:8]]
+    if len(rows) > 8:
+        lines.append(f"… +{len(rows) - 8} more")
+    fields = []
+    if before and after:
+        a, z, pc = fmt.move(before, after)
+        fields.append({"name": "Price in the block", "value": f"{a} → {z} τ  (**{fmt.pct(pc)}**)", "inline": True})
+    if info and info.pool_tao:
+        fields.append({"name": "Pool", "value": f"{fmt.tao(info.pool_tao)} τ", "inline": True})
+    bars = " · ".join(x for x in (f"sells ≥ {fmt.tao(sell_min)} τ" if sell_min > 0 else "",
+                                  f"buys ≥ {fmt.tao(buy_min)} τ" if buy_min > 0 else "") if x)
+    net = sum(b.tao for b in buys) - sum(b.tao for b in sells)
+    return {
+        "author": _author(info) if info else {"name": f"SN{netuid}", "url": subnet_url(netuid)},
+        "title": title,
+        "url": subnet_url(netuid),
+        "description": "\n".join(lines),
+        "color": GREEN if net >= 0 else RED,
+        "fields": fields,
+        "footer": {"text": f"Block #{block} · big trades: {bars}"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 # ── console ──────────────────────────────────────────────────────────────
 
 def console_alert(sig: Signal, info: SubnetInfo) -> str:

@@ -109,6 +109,9 @@ class Config:
     mempool_poll_ms: int
     mempool_endpoints: list[str]
     min_pool_tao: float
+    big_trade_sell_tao: float     # a landed sell of at least this much TAO gets a card in the price channel (0 = off)
+    big_trade_buy_tao: float      # … and a landed buy of at least this much
+    big_trades_webhook_url: str   # BIG_TRADES_HOOK_URL — their own channel (empty: the price channel)
     mention_pct: float
     mention: str
     startup_message: bool
@@ -194,6 +197,9 @@ def load() -> Config:
         mempool_poll_ms=_int("MEMPOOL_POLL_MS", 200),
         mempool_endpoints=_list("MEMPOOL_ENDPOINTS", DEFAULT_MEMPOOL_ENDPOINTS),
         min_pool_tao=_float("MIN_POOL_TAO", 0.0),
+        big_trade_sell_tao=_float("BIG_TRADE_SELL_TAO", 20.0),
+        big_trade_buy_tao=_float("BIG_TRADE_BUY_TAO", 50.0),
+        big_trades_webhook_url=(os.getenv("BIG_TRADES_HOOK_URL") or "").strip() or webhook,
         mention_pct=_float("MENTION_PCT", 0.0),
         mention=(os.getenv("MENTION") or "").strip(),
         startup_message=_bool("STARTUP_MESSAGE", True),

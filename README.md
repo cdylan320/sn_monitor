@@ -12,6 +12,7 @@ one pumps or dumps, e.g.
 | `.env` variable | Channel | What posts there |
 |---|---|---|
 | `PRICE_HOOK_URL` | price | pump/dump alerts, pending-trade (mempool) alerts |
+| `BIG_TRADES_HOOK_URL` | big trades | every landed sell of 20 τ+ and buy of 50 τ+ (empty: the price channel) |
 | `TREND_WEB_HOOK_URL` | trend | trend cards, reversal signals, the live trend board |
 | `NEWS_WEB_HOOK_URL` | news | subnet-channel news, X posts, **subnet lifecycle alerts** |
 
@@ -47,6 +48,11 @@ chain's own swap simulator. Backtested on real trades, the prediction error was
   - All pending trades on one subnet within about 2 blocks share **one card**, edited in place. Bots often fire the same order 10–20× at once.
   - The card shows the tx count, the wallets, and the predicted move "if all N land" (capped by the orders' limit prices).
   - Its status updates to `✅ k landed (actual move …)` or `⌛ never included`.
+- **Big trades:** every landed sell of **20 τ+** and buy of **50 τ+** (`BIG_TRADE_SELL_TAO` / `BIG_TRADE_BUY_TAO`, 0 = off),
+  `🔴 BIG SELL` / `🟢 BIG BUY`, right after its block: the wallet (its on-chain name when it has one), the price before →
+  after in that block, the pool. One message a block, one card per subnet; a wallet's trades on one subnet in a block are
+  added up; SN0 never. About 30 messages an hour, 60 in a busy one (29 Oct), so they have their own channel
+  (`BIG_TRADES_HOOK_URL`).
 - **Links:** subnet → taomarketcap.com/subnets/&lt;id&gt;, wallet → ss-ims.space/account/&lt;address&gt;.
 - **Spacing:** every message starts with a blank line, so cards don't run together.
 - **Footer:** block number and the measured detection latency.

@@ -68,6 +68,9 @@ class App:
         self.ready = False
         self._early: list[Block] = []
         self.alert_count = 0
+        self.big_discord = self._hook(cfg.big_trades_webhook_url)   # big sells / buys: the price channel unless given its own
+        self.big_trade_count = 0
+        self._names: dict[str, tuple[float, str]] = {}               # wallet → (when looked up, its on-chain name)
         self.pending_count = 0
         self.mempool: Mempool | None = None
         self._lat: list[float] = []
@@ -379,6 +382,48 @@ class App:
         except Exception:
             log.exception("buyback SN%d failed", b.netuid)
 
+    async def _wallet_name(self, addr: str) -> str:
+        """A wallet's on-chain name, kept an hour ("" when it has none, or the chain does not answer in 2 s)."""
+        hit = self._names.get(addr)
+        if hit and time.time() - hit[0] < 3600:
+            return hit[1]
+        try:
+            _, name = await asyncio.wait_for(self.meta.account(addr), 2)
+        except Exception:
+            return ""
+        self._names[addr] = (time.time(), name)
+        if len(self._names) > 5000:
+            for k in list(self._names)[:1000]:
+                del self._names[k]
+        return name
+
+    async def _big_trades(self, big: list[alerts.BigTrade], block: Block) -> None:
+        """A block's big sells / buys (BIG_TRADE_SELL_TAO / BIG_TRADE_BUY_TAO): one card per subnet, one message a block."""
+        try:
+            for b, name in zip(big, await asyncio.gather(*(self._wallet_name(b.coldkey) for b in big))):
+                b.name = name
+            prev = self.det.history.get(block.number - 1, {})
+            by: dict[int, list[alerts.BigTrade]] = {}
+            for b in big:
+                by.setdefault(b.netuid, []).append(b)
+            sell, buy = self.cfg.big_trade_sell_tao, self.cfg.big_trade_buy_tao
+            cards = []
+            for n, rows in by.items():
+                info = self.meta.info(n)
+                before, after = prev.get(n), block.prices.get(n)
+                move = fmt.move(before, after)[2] if before and after else None
+                lines = [alerts.big_trade_line(b, info, move) for b in rows]
+                for b, line in zip(rows, lines):
+                    print((fmt.green if b.buy else fmt.red)(f"{now_str()} {line.replace('**', '')}"))
+                cards.append((lines, alerts.big_trades_embed(rows, info, block.number, before, after, sell, buy)))
+            self.big_trade_count += len(big)
+            for i in range(0, len(cards), 4):        # ≤4 cards a message keeps it under Discord's 6,000 characters
+                part = cards[i:i + 4]
+                await self.big_discord.send({"content": alerts.content([ln for lines, _ in part for ln in lines][:12]),
+                                             "embeds": [e for _, e in part], "allowed_mentions": {"parse": []}})
+        except Exception:
+            log.exception("big trades card for #%d failed", block.number)
+
     async def _after_block(self, block: Block) -> None:
         try:
             tr, life, burns, moved = await asyncio.wait_for(self.meta.trades(block.number, block.hash), 15)
@@ -394,6 +439,10 @@ class App:
                 self.funding.log.add(block.number, time.time(), moved, [(t.coldkey, t.netuid, t.tao) for t in tr if not t.buy])
             except Exception as e:
                 log.debug("transfer log #%d: %s", block.number, e)
+        if tr and (self.cfg.big_trade_sell_tao > 0 or self.cfg.big_trade_buy_tao > 0):
+            big = alerts.big_trades(tr, self.cfg.big_trade_sell_tao, self.cfg.big_trade_buy_tao, self.watched)
+            if big:
+                asyncio.create_task(self._big_trades(big, block))
         if self.cfg.news_buybacks and (tr or burns):
             owners = {n: s.owner for n, s in self.meta.subnets.items() if s.owner}
             found = buyback.find(tr, burns, owners, self.cfg.news_buyback_wallets, self.cfg.news_buyback_min_tao)
@@ -858,7 +907,7 @@ class App:
                   if self.mempool else "")
             print(fmt.dim(f"{now_str()} ── 5m: {len(lat)} blocks · detect median {lat[len(lat) // 2]:.0f} ms, "
                           f"p95 {lat[int(len(lat) * 0.95)]:.0f} ms · first header: {wins}{mp} · "
-                          f"alerts {self.alert_count} · pending {self.pending_count}"
+                          f"alerts {self.alert_count} · pending {self.pending_count} · big trades {self.big_trade_count}"
                           + (f" · trends {self.trend.alerts}" if self.trend else "")
                           + (f" · news {self.news.posted} (gateway msgs {self.news.stats.get('MESSAGE_CREATE', 0)}, "
                              f"passive {self.news.stats.get('PASSIVE_UPDATE_V1', 0) + self.news.stats.get('PASSIVE_UPDATE_V2', 0)}"
