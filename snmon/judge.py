@@ -26,8 +26,10 @@ DEFAULT_MODEL = {"openrouter": "openai/gpt-6.1-sol", "anthropic": "claude-opus-5
 # asked next to the main model: its "important" goes to the bots at once, its "not important" waits for the main model.
 # 21 Oct, 21 real posts × 2: gpt-6-luna without thinking answers in 1.3 s (gpt-6.1-sol 2.5 s, up to 5 s) and agrees on 39
 # of 42, but it missed 2 of the 5 important posts — alone it would lose trades. gpt-oss-120b (0.3 s) and Mercury (0.6 s)
-# call too much important.
-FAST_MODEL = "openai/gpt-6-luna"
+# call too much important. 29 Oct, with the strict instructions, 56 posts × 2: mercury-3 0.5 s (p90 0.7 s), luna 1.4 s
+# (p90 1.9 s), claude-haiku-5.5 0.9 s (p90 1.7 s) — each called 1 of the 13 old false alarms important, all 11 real news
+# (mercury once missed SN25's deal: the main model catches it). SN105's Zapier post waited 2.1 s for luna.
+FAST_MODEL = "inception/mercury-3"
 
 CATEGORIES = ["launch", "progress", "funding", "revenue", "partnership", "listing", "tokenomics", "other", "none"]
 

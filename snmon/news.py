@@ -88,6 +88,11 @@ SUBNET_X_INFLIGHT = 2      # looks at one subnet account running at the same tim
                            # any await, so two never post the same post). 28 Oct, 5 minutes each: 1 at a time (20/s)
                            # 9.3 good looks a second; 2 → 10.9, const's looks 14% failed; 3 → 10.7, but fxtwitter
                            # failed more (const 27%) — its capacity is the limit, more load only costs const
+# that capacity goes where posts come from: an account that posted in the last SUBNET_X_ACTIVE_DAYS gets twice the looks of
+# one quiet for SUBNET_X_QUIET_DAYS, four times a silent one's (29 Oct: 40 of 61 posted within 3 days, 15 silent > 7 days;
+# each account was looked at every ~5.2 s — SN105's Zapier post was seen 6.5 s late and the bot landed a block after
+# the others; now an active one every ~3.6 s, a silent one every ~14 s)
+SUBNET_X_ACTIVE_DAYS, SUBNET_X_QUIET_DAYS = 3, 7
 # X search for a subnet sold (any account; the user's X login): words that say it, and the subnet's number in the post
 ACQ_QUERY = ('(acquired OR acquires OR acquisition OR "new owner" OR "new owners" OR "took over" OR "taken over" '
              'OR "new home") (bittensor OR subnet OR tao)')
@@ -140,6 +145,7 @@ class NewsMonitor:
         self._fetching: set[str] = set()
         self._member_lookup_off = False
         self._x_ids: dict[str, list[str]] = {}  # X handle → tweet ids already seen
+        self._x_weights: dict[str, tuple[float, float]] = {}   # subnet X account → (good until, its share of the looks)
         self._last: dict[str, int] = {}          # channel → last message id, as saved (also for channels not loaded)
         self._x_sub: dict[str, float] = {}       # tweet id → when a subnet's own account was seen posting it
         self._x_first: dict[str, tuple[float, str]] = {}   # tweet id → (first seen, by "xs" fxtwitter / "xl" the X list)
@@ -697,15 +703,40 @@ class NewsMonitor:
         """Watch every subnet's own X account (found by xsubnets.SubnetAccounts): its post is news the moment it is
         seen — the Discord share comes minutes later (20 Oct: @vidaio_ posted at 15:03, it was shared in #85 at 15:04
         while bots were already buying SN85). One account after another, `rate` timeline requests a second in all
-        (16/s, 2 looks of an account may overlap: ~68 accounts, each every ~4.2 s — 21 Oct, SN54's post waited 11 s at 6/s;
-        28 Oct, SN46's 3.2 s at 12/s). Its own posts and quotes count; replies (its thread's next parts too)
+        (16/s, 2 looks of an account may overlap, ~13 good looks a second: ~68 accounts, the active ones each every ~3.6 s,
+        see SUBNET_X_ACTIVE_DAYS — 21 Oct, SN54's post waited 11 s at 6/s; 28 Oct, SN46's 3.2 s at 12/s). Its own posts and quotes count; replies (its thread's next parts too)
         and reposts are chatter. The handles are looked up again every hour for the subnets that are due."""
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8),
                                          headers={"User-Agent": "Mozilla/5.0 sn-monitor"}) as session:
             await self._subnet_x_poll_loop(session, accounts, rate)
 
+    def _x_weight(self, key: str) -> float:
+        """How many looks an account gets: 2 when it posted in the last SUBNET_X_ACTIVE_DAYS, 1 within
+        SUBNET_X_QUIET_DAYS (or not looked at yet), 0.5 when silent longer — read from the newest post it has shown."""
+        hit = self._x_weights.get(key)
+        if hit and hit[0] > time.time():
+            return hit[1]
+        ids = [i for i in self._x_ids.get(key, ()) if str(i).isdigit()]
+        days = (time.time() - max(map(x_posted, ids))) / 86400 if ids else SUBNET_X_ACTIVE_DAYS
+        w = 2.0 if days < SUBNET_X_ACTIVE_DAYS else 1.0 if days < SUBNET_X_QUIET_DAYS else 0.5
+        self._x_weights[key] = (time.time() + 60, w)
+        return w
+
+    def _x_next(self, watch, passes: dict[str, float]) -> str:
+        """The account whose turn it is: weighted round robin (stride scheduling) — each look moves an account on by
+        1 / its weight, the one furthest behind goes next; a new account starts level with the others."""
+        low = min((passes[k] for k in watch if k in passes), default=0.0)
+        for k in watch:
+            passes.setdefault(k, low)
+        if len(passes) > 2 * len(watch):
+            for k in [k for k in passes if k not in watch]:
+                del passes[k]
+        key = min(watch, key=lambda k: (passes[k], k))
+        passes[key] += 1.0 / self._x_weight(key)
+        return key
+
     async def _subnet_x_poll_loop(self, session, accounts, rate: float, refresh_every: float = 3600.0) -> None:
-        turn = 0
+        passes: dict[str, float] = {}
         self._x_accounts = accounts
         looks: dict[str, set[asyncio.Task]] = {}
         try:
@@ -717,10 +748,8 @@ class NewsMonitor:
                     else:
                         self._x_refresh_at = time.time() + 5     # a lookup is running: the next one right after it
                 watch = accounts.accounts()
-                order = sorted(watch)
-                if order and time.time() >= self._x_pause_until:
-                    key = order[turn % len(order)]
-                    turn += 1
+                if watch and time.time() >= self._x_pause_until:
+                    key = self._x_next(watch, passes)
                     group = looks.setdefault(key, set())
                     group -= {t for t in group if t.done()}
                     # a look takes ~2.3 s (longer with fxtwitter's retries): with one at a time the account's next turn

@@ -277,6 +277,23 @@ def _run_x_loop(tl, seconds, post_delay=0.0, every=0.05):
     return asyncio.run(go())
 
 
+def test_subnet_x_accounts_that_post_get_more_looks_than_silent_ones():
+    # 29 Oct: SN105's Zapier post was seen 6.5 s late — every account got the same looks, 15 of 61 silent for over a week
+    m = nm()
+    now_id = lambda days: str(int((time.time() - days * 86400) * 1000 - 1288834974657) << 22)
+    m._x_ids = {"b1m_ai": [now_id(0.2)], "weekly": [now_id(5)], "silent": [now_id(30)]}
+    watch = {"b1m_ai": ("b1m_ai", {105}), "weekly": ("weekly", {9}), "silent": ("silent", {7}), "new": ("new", {1})}
+    passes, n = {}, {}
+    for _ in range(90):
+        k = m._x_next(watch, passes)
+        n[k] = n.get(k, 0) + 1
+    assert n == {"b1m_ai": 40, "weekly": 20, "new": 20, "silent": 10}, n
+    order = [m._x_next(watch, passes) for _ in range(9)]
+    assert order.count("b1m_ai") == 4 and order[:2] != ["b1m_ai", "b1m_ai"]     # spread out, not in a burst
+    watch["late"] = ("late", {2})                                               # a new account starts level, not first forever
+    assert [m._x_next(watch, passes) for _ in range(12)].count("late") == 2
+
+
 def test_x_overlapping_looks_post_a_new_tweet_once_even_while_its_card_is_still_being_posted():
     tl = _Timeline(latency=0.4, appear_at=1.0)
     posted = _run_x_loop(tl, 2.4, post_delay=0.6)          # the card takes longer than a look: other looks come back meanwhile

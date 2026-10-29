@@ -257,7 +257,7 @@ NOT = {"important": False, "category": "none", "reason": "a reply to a user"}
 
 
 def test_the_fast_models_important_goes_out_at_once_its_not_important_waits_for_the_main_model():
-    # 21 Oct: gpt-6-luna answers in 1.3 s (gpt-6.1-sol 2.5 s, up to 5 s) but missed 2 of 5 important posts
+    # 21 Oct: gpt-6-luna answers in 1.3 s (29 Oct: the fast model is mercury-3, 0.5 s — the same rules) (gpt-6.1-sol 2.5 s, up to 5 s) but missed 2 of 5 important posts
     async def go():
         os.environ["OPENROUTER_API_KEY"] = "sk-or-test"
         try:
