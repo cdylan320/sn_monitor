@@ -5,3 +5,5 @@ python-dotenv==1.2.3
 uvloop==0.22.1
 websockets==17.1
 anthropic==1.17.0
+numpy==2.5.4
+pillow==13.0.0
