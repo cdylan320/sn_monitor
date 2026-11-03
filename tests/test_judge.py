@@ -284,6 +284,10 @@ def test_the_fast_models_important_goes_out_at_once_its_not_important_waits_for_
             down = judge({"openai/gpt-6.1-sol": (0.05, None), "openai/gpt-6-luna": (0.2, NOT)})
             v = await down.judge("SN9", "community call tomorrow")
             assert v.by == "ai" and v.model == "openai/gpt-6-luna" and not v.important   # main failed: the fast answer
+            slow = judge({"openai/gpt-6.1-sol": (5.0, FUNDING), "openai/gpt-6-luna": (0.2, NOT)})
+            slow.timeout = 2.0                                             # 3 Nov: the main model too slow on a bad network
+            v = await slow.judge("SN116", "Testnet is LIVE and man is it working!")
+            assert v.by == "ai" and v.model == "openai/gpt-6-luna" and not v.important   # the fast answer, not the rules
             off = NewsJudge(session=_Models({"openai/gpt-6.1-sol": (0.0, FUNDING)}))
             await off.judge("SN85", "We raised $5M")
             assert [m for m, _ in off.session.calls] == ["openai/gpt-6.1-sol"]          # no fast model unless set

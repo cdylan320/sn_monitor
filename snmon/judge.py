@@ -217,7 +217,10 @@ class NewsJudge:
         ask = self._ask_openrouter if self.provider == "openrouter" else self._ask
         if not self.fast_model:
             return await self._first(ask, *args)
-        main = asyncio.create_task(asyncio.wait_for(self._first(ask, *args), self.timeout))
+        # the main model gets a little less than the whole check: when it is too slow, the fast model's answer is used,
+        # not the keyword rules (3 Nov, SN116: the network was slow, both ran out at 8 s together and the rules sent
+        # "Testnet is LIVE" to the bots as a launch)
+        main = asyncio.create_task(asyncio.wait_for(self._first(ask, *args), max(0.5, self.timeout - 1.5)))
         fast = asyncio.create_task(self._ask_openrouter(*args, model=self.fast_model))
         kept = False
         try:
