@@ -82,6 +82,12 @@ def test_the_keyword_rules_on_real_posts():
     assert rules("We just killed cold outreach. Introducing Leadpoet: the AI sales agent").category == "launch"
     assert rules("Vidaio raised $5M from Polychain").category == "funding"
     assert rules("Today we welcome our newest sales partner: Tobruk Protective Security Solutions.").category == "partnership"
+    # 3 Nov, SN116: the AI timed out and the rules sent "Testnet is LIVE" to the bots as a launch
+    carbon = ("We're optimizing Carbon testnet challenges daily in preparation for mainnnet.\n\nTestnet is LIVE and man is "
+              "it working! Miners are already crushing this.")
+    assert rules(carbon).important is False
+    assert rules("Mainnet v2 coming soon, stay tuned").important is False
+    assert rules("Chutes mainnet v2 is live now: serverless inference for everyone today.").category == "launch"
 
 
 def test_an_x_post_id_tells_when_it_was_posted():

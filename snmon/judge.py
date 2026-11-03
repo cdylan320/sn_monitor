@@ -111,6 +111,10 @@ RULES = [
     ("progress", r"\b(record|milestone|all[- ]time high|beat(s|ing)? (the )?(sota|state of the art|benchmark)|surpass(ed)?|\d+[kmb]?\+? (users|downloads|requests|calls))\b"),
 ]
 NOT_NEWS = re.compile(r"^\s*(@\w+\s+)+|^\s*(yes|yeah|no|thanks|thank you|hi|hey|gm|lol)\b|\b(reminder|recap|ama|spaces?|podcast|hiring|we'?re hiring)\b", re.I)
+# what the AI's strict rules (since 24 Oct) call not important — the keyword rules decide when the AI does not answer in
+# time, and must not be looser (3 Nov, SN116: the AI timed out, "Testnet is LIVE" went to the bots as a launch)
+NOT_YET = re.compile(r"\b(testnet|coming soon|soon™?|in preparation|preparing|prepare|upcoming|roadmap|teaser|will (?:launch|go live|be live|release)"
+                     r"|next (?:week|month)|tomorrow|competition|challenges?|leaderboard)\b", re.I)
 
 
 @dataclass
@@ -138,6 +142,9 @@ def rules(text: str, tweet_age_s: float | None = None) -> Verdict:
         return Verdict(False, "none", f"the shared X post is {tweet_age_s / 3600:.0f} h old", "rules")
     if NOT_NEWS.search(text or ""):
         return Verdict(False, "none", "a reply, reminder or event — not news", "rules")
+    m = NOT_YET.search(text or "")
+    if m:
+        return Verdict(False, "none", f"mentions “{m.group(0).strip()}” — not live news", "rules")
     for cat, rx in RULES:
         m = re.search(rx, text or "", re.I)
         if m:
