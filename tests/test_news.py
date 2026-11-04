@@ -534,6 +534,53 @@ def test_a_changed_subnet_gets_its_x_account_looked_up_at_once():
     assert rechecked == [27] and m._x_refresh_at == 0.0
 
 
+def test_a_teams_account_posts_for_the_one_of_its_subnets_the_post_names():
+    # 4 Nov: @MacrocosmosAI is the account of SN1 Apex, SN9 iota and SN13 Data Universe. Its "Introducing IOTA Decide 4B"
+    # (18:11) got no subnet — "iota" is an ordinary word — so it was not judged nor sent to the bots; const quoted it
+    # (19:46) and a bot bought SN1. Among a team's subnets its name in any case counts.
+    from snmon.meta import SubnetInfo
+    from snmon.news import team_named
+    names = {1: "Apex", 9: "iota", 13: "Data Universe", 64: "Chutes"}
+    team = {n: names[n] for n in (1, 9, 13)}
+    iota = ("Introducing IOTA Decide 4B, our first public model.\n\nPareto optimal. Built different. Trained across globally "
+            "distributed GPUs with our SDK.\n\nOpen weights, Apache-2.0.\n\nhttp://huggingface.co/macrocosm-os/iota-decide-4b-v0.4")
+    assert team_named(iota, team) == 9
+    assert team_named("our weights: huggingface.co/macrocosm-os/iota-decide-4b", team) == 9      # in a link
+    assert team_named("A new Data Universe release", team) == 13 and team_named("datauniverse is live", team) == 13
+    assert team_named("3 pareto-frontier models released today", team) is None                  # none named
+    assert team_named("Apex and IOTA, both live", team) is None                                  # two named
+
+    m = nm()
+    m.meta.subnets = {n: SubnetInfo(n, name, "", 9000.0, 1, None, None) for n, name in names.items()}
+
+    class Accounts:
+        def accounts(self):
+            return {"macrocosmosai": ("MacrocosmosAI", {1, 9, 13}), "chutes_ai": ("chutes_ai", {64})}
+    m._x_accounts = Accounts()
+    own = {"id": "2118020000000000000", "author": {"screen_name": "MacrocosmosAI"}, "text": iota}
+    assert m._x_subnet(own, among={1, 9, 13}) == 9
+    assert m._x_subnet(dict(own, text="3 models released on Bittensor today."), among={1, 9, 13}) is None
+    const = {"id": "2118040000000000000", "author": {"screen_name": "const_reborn"},
+             "text": "3 pareto-frontier models released on Bittensor today.",
+             "quote": {"author": {"screen_name": "MacrocosmosAI"}, "text": iota}}
+    assert m._x_subnet(const) == 9                                              # const quoting the team: SN9, not SN1
+    reply = {"id": "2118050000000000000", "author": {"screen_name": "const_reborn"}, "text": "IOTA is cooking",
+             "replying_to": {"screen_name": "MacrocosmosAI"}}
+    assert m._x_subnet(reply) == 9
+    assert m._x_subnet(dict(const, quote={"author": {"screen_name": "someone"}, "text": iota})) is None   # not the team's
+
+    posted = []
+
+    async def post_x(t, handle, feed_kind="x_account", netuid=None, **kw):
+        posted.append((handle, feed_kind, netuid))
+    m._post_x = post_x
+    m._save_state = lambda: None
+    m._x_ids = {"macrocosmosai": ["2118000000000000000"]}
+    items = [dict(own, created_timestamp=time.time() - 2), {"id": "2118000000000000000", "author": {"screen_name": "MacrocosmosAI"}}]
+    asyncio.run(m._subnet_x_items("MacrocosmosAI", {1, 9, 13}, items))
+    assert posted == [("MacrocosmosAI", "x_subnet", 9)]
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

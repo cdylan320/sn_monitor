@@ -841,7 +841,7 @@ class NewsMonitor:
         for t in new:
             if time.time() - float(t.get("created_timestamp") or time.time()) > X_SUBNET_MAX_AGE_S:
                 continue   # posted while the monitor was down: not news any more
-            n = next(iter(netuids)) if len(netuids) == 1 else self._x_subnet(t)
+            n = next(iter(netuids)) if len(netuids) == 1 else self._x_subnet(t, among=netuids)
             self._x_sub[str(t.get("id"))] = time.time()
             self.stats[f"{source}_first"] = self.stats.get(f"{source}_first", 0) + 1
             await self._post_x(t, handle, feed_kind="x_subnet", netuid=n if n in netuids else None)
@@ -1028,10 +1028,16 @@ class NewsMonitor:
             in_list.clear()
             in_list.update(str(t.get("id")) for t in items)
 
-    def _x_subnet(self, t: dict) -> int | None:
+    def _x_subnet(self, t: dict, among: set[int] | None = None) -> int | None:
         """Which subnet a tweet is about: 'SN81' / 'subnet 81', an @handle containing a subnet's name, or the name itself
-        written as a name ('Why is SOMA such a great compressor…' → SN114)."""
+        written as a name ('Why is SOMA such a great compressor…' → SN114). `among`: the subnets of the team whose
+        account posted it (one account, several subnets) — the one of them the post names comes first."""
         text = (t.get("text") or "") + " " + ((t.get("quote") or {}).get("text") or "")
+        names = {n: i.name for n, i in self.meta.subnets.items() if n}
+        if among:
+            n = team_named(text, {x: names.get(x, "") for x in among})
+            if n is not None:
+                return n
         m = re.search(r"\b(?:sn|subnet)\s?#?(\d{1,3})\b", text, re.I)
         if m and int(m.group(1)) in self.meta.subnets:
             return int(m.group(1))
@@ -1042,7 +1048,18 @@ class NewsMonitor:
             name = re.sub(r"[^a-z0-9]", "", (info.name or "").lower())
             if n and len(name) >= 4 and any(name in h for h in handles if h):
                 return n
-        return subnet_named(text, {n: i.name for n, i in self.meta.subnets.items() if n})
+        n = subnet_named(text, names)
+        if n is not None or self._x_accounts is None:
+            return n
+        # it quotes, mentions or replies to a team's account (4 Nov: const quoted @MacrocosmosAI — the account of SN1 Apex,
+        # SN9 iota and SN13 Data Universe — "Introducing IOTA Decide 4B …": SN9, but no subnet was found)
+        rt = t.get("replying_to")
+        handles.add(((rt.get("screen_name") if isinstance(rt, dict) else str(rt or "")) or "").lower())
+        teams = self._x_accounts.accounts()
+        found = {team_named(text, {x: names.get(x, "") for x in teams[h][1]})
+                 for h in handles if h in teams and len(teams[h][1]) > 1}
+        found.discard(None)
+        return next(iter(found)) if len(found) == 1 else None
 
     async def _post_x(self, t: dict, handle: str, parent: dict | None = None, feed_kind: str = "x_account",
                       netuid: int | None = None, verdict=None, headline: str = "") -> None:
@@ -1188,6 +1205,21 @@ def subnet_named(text: str, names: dict[int, str]) -> int | None:
             for form in {name, name.upper()} | ({name.capitalize()} if name.isupper() or name.islower() else set()):
                 forms.setdefault(form, n)
     hits = {forms[t] for t in re.findall(r"[A-Za-z0-9]+", re.sub(r"https?://\S+", " ", text or "")) if t in forms}
+    return next(iter(hits)) if len(hits) == 1 else None
+
+
+def team_named(text: str, names: dict[int, str]) -> int | None:
+    """The one subnet of a team's (one X account posting for several: @MacrocosmosAI → SN1 Apex, SN9 iota, SN13 Data
+    Universe) that a post names — by its name in any case, an ordinary word too (among the team's subnets "IOTA" is SN9),
+    in the text or a link (…/iota-decide-4b). None named or several: None. In step with sn_trader's match.named_among."""
+    low = (text or "").lower()
+    words = set(re.findall(r"[a-z0-9]+", low))
+    joined = re.sub(r"[^a-z0-9]", "", low)
+    hits = set()
+    for n, name in names.items():
+        name = re.sub(r"[^a-z0-9]", "", (name or "").lower())
+        if len(name) >= 3 and (name in words or (len(name) >= 7 and name in joined)):     # "Data Universe" → datauniverse
+            hits.add(n)
     return next(iter(hits)) if len(hits) == 1 else None
 
 

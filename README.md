@@ -257,6 +257,10 @@ on chain (sold, renamed, new website) gets its X account looked up again at once
 `NEWS_X_SUBNET_RATE` (16) looks a second in all, two of one account may overlap — each about every 4.2 s; a failed look (the free API fails ~40% of
 requests) is tried again at once, up to 2 times. A subnet's own post or quote becomes a card
 and goes to the trading bots at once (kind `x_subnet`); a later share of it in Discord is not reported again.
+One account can post for a team's several subnets (@MacrocosmosAI: SN1 Apex, SN9 iota, SN13 Data Universe): its post
+goes to the one subnet it names, in any case, ordinary word or not ("Introducing IOTA Decide 4B" → SN9); naming none
+or several, it gets no subnet and is not sent. The same holds when another account (const) quotes, mentions or replies
+to such an account.
 With an X login (`X_AUTH_TOKEN` / `X_CT0`, the x.com cookies), all those accounts are also read in **one** request: a
 private X list the monitor makes and keeps up to date (`data/x_list.json`), ~0.6 s for all of them, about every
 `NEWS_X_LIST_SECONDS` (2) — X allows 500 reads per 15 minutes. fxtwitter goes on next to it; whichever sees a post first

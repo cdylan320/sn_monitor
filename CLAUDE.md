@@ -44,6 +44,8 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
 - Subnet X accounts: fxtwitter (one account per request, each ~every 6 s). A private X list read with the user's X
   login (`snmon/xlist.py`, `NEWS_X_LIST`, account @cdylan321) exists but is OFF: X adds posts to a list 6-14 s late
   (median ~9.5 s); fxtwitter was first 10 of 12 times (~5 s), measured 21-22 Oct.
+  A team's account (@MacrocosmosAI = SN1, SN9, SN13) → the subnet the post names, ordinary word or not ("IOTA" → SN9;
+  4 Nov a bot bought SN1 for it). Same rule in the trader (`match.named_among`) and when const quotes / replies to it.
 - Subnet sales: X search with that login (`acquisition_loop`, every 6 s, ~12 s index lag): a post that says "acquired"
   and names a subnet → AI check → 🤝 card, `acquisition` event (the bots trade it like a rename), the buyer's account
   becomes the subnet's X account (kept until its identity changes on chain). News / analytics accounts that cover every
