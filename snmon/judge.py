@@ -51,7 +51,11 @@ Important only when it is NEW, CONCRETE and happening NOW (the categories to ans
   announcement of the deal (it counts even when it starts within a day), not its later rounds, results or reminders
 - listing: listed on a major exchange
 - tokenomics: a buyback, a burn, or the owner / team cutting their own emissions or selling less
-- progress: only an outstanding first — a record that beats the big labs or the whole industry, confirmed by others
+- progress: a BIG update of the subnet's own flagship product, announced as major news by the subnet itself, with
+  concrete results: a new model or system whose numbers beat the best existing ones (named competitors, "beats every …",
+  "the largest … out there", "the first … that can …"), a big training run done or nearly done, a record. The subnet's
+  own numbers count (no outside confirmation needed), and it counts even when the release follows soon. Not a small
+  step, a routine update, or miners' scores on its leaderboard
 - other: a rare event of the same weight, e.g. the subnet being acquired or sold to a new owner
 
 NOT important, however it is worded:
@@ -60,8 +64,9 @@ NOT important, however it is worded:
 - usage, traffic or growth figures (tokens processed, requests, users, decisions per second), milestones of that kind
 - competition and challenge news of the subnet's own miners: new rounds, challenges, scores, champions, benchmarks of
   miners' submissions, rules, evaluation changes, leaderboards (but a deal with another subnet, above, is important)
-- testnet releases, plans, roadmaps, upcoming or scheduled launches and changes, teasers, "big things coming"
-- research results, papers, model or dataset uploads, demos
+- testnet releases, plans, roadmaps, upcoming or scheduled launches and changes, teasers, "big things coming" — plans
+  with no concrete result yet (a big result with numbers is progress, above)
+- small research results, papers, model or dataset uploads, demos
 - recruiting miners, validators or GPU providers; capacity or demand claims
 - replies, support, bug fixes, maintenance, downtime, instructions, routine dev or weekly updates
 - reminders, recaps, summaries of known facts, re-shares of older posts, events, AMAs, spaces, podcasts, hiring, memes
@@ -85,8 +90,9 @@ SCHEMA = {
 ACQ_SYSTEM = """You read one X post. Decide whether it OFFICIALLY ANNOUNCES that a Bittensor subnet (named by its number: \
 "SN27", "subnet 27", "netuid 27") now has a new owner — the author's own team or company acquired / bought / took over \
 that subnet. NOT an acquisition: rumours, questions, jokes, wishes ("someone should buy SN27"), congratulations or \
-commentary by others, an acquisition of something else (a company, a domain), a subnet buying a product, or a subnet \
-registering a new slot. Answer the subnet's number (0 when there is none or it is not an acquisition), the new owner's \
+commentary by others, an acquisition of something else (a company, a domain), a subnet buying a product, a subnet \
+registering a new slot, or a report of an on-chain event (an owner coldkey swap, an owner change) by a news, analytics or \
+tracker account that covers many subnets — the author must be the buyer itself. Answer the subnet's number (0 when there is none or it is not an acquisition), the new owner's \
 name, and a reason of at most 12 words."""
 ACQ_SCHEMA = {
     "type": "object",
