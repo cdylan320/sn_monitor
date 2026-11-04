@@ -36,10 +36,12 @@ PROFILE_PACE_S = 1.0       # profile checks one at a time, this far apart (the s
 PROFILE_URLS = ("https://api.fxtwitter.com/{}", "https://api.fxtwitter.com/2/profile/{}")
 BROWSER = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"}
 LINK_RE = re.compile(r"(?:https?:)?//(?:www\.|mobile\.)?(?:x|twitter)\.com/(?:#!/)?@?(\w{1,15})(?=[/\"'?#\s<\\)\]]|$)", re.I)
-# X's own pages and accounts that are never one subnet's: Bittensor-wide accounts, const
+# X's own pages and accounts that are never one subnet's: Bittensor-wide accounts, const, and news / analytics accounts
+# that report on every subnet (4 Nov: @subnetradarcom's report of an SN16 owner change was taken for a sale — its posts
+# about all subnets went out as SN16's news for days)
 NOT_SUBNET = frozenset({"intent", "share", "home", "i", "search", "hashtag", "login", "signup", "explore", "settings",
                         "messages", "notifications", "privacy", "tos", "x", "twitter", "elonmusk", "opentensor",
-                        "bittensor", "const_reborn"})
+                        "bittensor", "const_reborn", "subnetradarcom", "tao_planet_"})
 GITHUB_RE = re.compile(r"github\.com/([^/\s]+/[^/\s#?]+)", re.I)
 
 
@@ -110,6 +112,11 @@ class SubnetAccounts:
             self.found = {int(n): e for n, e in json.loads(CACHE_FILE.read_text()).get("found", {}).items()}
         except (OSError, ValueError):
             pass
+        wrong = [n for n, e in self.found.items() if self._never((e or {}).get("handle") or "")]
+        for n in wrong:                         # found or claimed before that account was known not to be a subnet's
+            del self.found[n]
+        if wrong:
+            self.save()
 
     def save(self) -> None:
         try:
@@ -151,13 +158,20 @@ class SubnetAccounts:
     def recheck(self, n: int) -> None:
         self.forced.add(n)
 
-    def claim(self, n: int, handle: str, info) -> None:
+    def _never(self, handle: str) -> bool:
+        return handle.lower() in NOT_SUBNET or handle.lower() in self.skip
+
+    def claim(self, n: int, handle: str, info) -> bool:
         """The buyer's X account, from its post announcing it acquired the subnet: watched at once, and kept until the
-        subnet's identity changes on chain (then its website says which account is the subnet's)."""
+        subnet's identity changes on chain (then its website says which account is the subnet's). False: an account
+        that is never one subnet's (a news account reporting the sale)."""
+        if self._never(handle):
+            return False
         self.found[n] = {"handle": handle, "why": "acquisition", "candidate": handle, "src": "acquisition post",
                          "url": info.url or "", "name": info.name, "at": time.time()}
         self.forced.discard(n)
         self.save()
+        return True
 
     async def _candidate(self, session: aiohttp.ClientSession, sem: asyncio.Semaphore, info) -> tuple[str, str]:
         ident = info.identity or {}

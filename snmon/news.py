@@ -37,6 +37,7 @@ from . import alerts, fmt
 from .config import ROOT
 from .gateway import DiscordUser
 from .judge import Verdict
+from .xsubnets import NOT_SUBNET
 
 log = logging.getLogger("snmon.news")
 
@@ -971,6 +972,8 @@ class NewsMonitor:
             if not nums or self.judge is None:
                 return
             author = (t.get("author") or {}).get("screen_name") or ""
+            if author.lower() in NOT_SUBNET:      # a news account reporting a sale is not the buyer
+                return
             if all(time.time() - self._acquired.get(f"{x}:{author.lower()}", 0) < 24 * 3600 for x in nums):
                 return                            # the buyer's next post about the same sale: already reported today
             self.stats["xa_checked"] = self.stats.get("xa_checked", 0) + 1

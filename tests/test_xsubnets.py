@@ -275,6 +275,19 @@ def test_a_subnet_whose_owner_changed_is_looked_at_again_even_with_the_same_webs
 
 
 
+def test_a_news_account_reporting_a_sale_never_becomes_the_subnets_account():
+    # 4 Nov: @subnetradarcom (analytics on all subnets) reported an SN16 owner change; it was taken for the buyer and
+    # its posts about every subnet went out as SN16's news for days
+    import json
+    xsubnets.CACHE_FILE.write_text(json.dumps({"found": {"16": {"handle": "subnetradarcom", "why": "acquisition"},
+                                                         "85": {"handle": "vidaio_", "why": "website"}}}))
+    acc = xsubnets.SubnetAccounts()
+    assert acc.by_netuid() == {85: "vidaio_"}                       # the old wrong claim is dropped at start
+    assert acc.claim(16, "SubnetRadarCom", SUBNETS[85]) is False and 16 not in acc.by_netuid()
+    assert acc.claim(27, "KommsApp", SUBNETS[85]) is True and acc.by_netuid()[27] == "KommsApp"
+    xsubnets.CACHE_FILE.unlink(missing_ok=True)
+
+
 def test_looks_of_one_account_may_overlap_so_a_slow_look_does_not_skip_its_next_turn():
     # 28 Oct: one look at a time, a look taking ~2.3 s (more with retries) — at 20 turns a second each account was looked
     # at every ~7 s, not every ~4
