@@ -88,6 +88,22 @@ def test_the_keyword_rules_on_real_posts():
     assert rules(carbon).important is False
     assert rules("Mainnet v2 coming soon, stay tuned").important is False
     assert rules("Chutes mainnet v2 is live now: serverless inference for everyone today.").category == "launch"
+    # 5 Nov, SN11 TrajectoryRL (+4% in 5 min, +6.5% in 15): the subnet changing course is news, details tomorrow or not
+    sn11 = ("We're desigin a new direction of trajrl, new IM will be announced tomorrow. Sorry that we ignored a lot "
+            "questions about the current system, we can all move on and looking forward to the new product.")
+    assert rules(sn11).category == "pivot" and rules(sn11).important
+    assert rules("We are pivoting to on-chain sports analytics; the new incentive mechanism goes live next week").category == "pivot"
+    assert rules("📢 SPEC 28 Update — Scheduled for Epoch 4650  SPEC 28 will replace six scenarios to refresh the "
+                 "benchmark").important is False                                       # a change inside the mechanism
+    assert rules("@crabby a new direction? when?").important is False                  # a reply
+
+
+def test_the_subnet_changing_course_is_important():
+    from snmon.judge import CATEGORIES, SYSTEM
+    assert "pivot" in CATEGORIES and "- pivot: the team says the subnet ITSELF changes course" in SYSTEM
+    assert "new IM will be announced tomorrow" in SYSTEM and "Not a change\n  inside the current mechanism" in SYSTEM
+    v = NewsJudge._verdict(json.dumps({"important": True, "category": "pivot", "reason": "new direction and new IM"}))
+    assert v.important and v.category == "pivot"
 
 
 def test_an_x_post_id_tells_when_it_was_posted():

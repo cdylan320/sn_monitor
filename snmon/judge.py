@@ -31,7 +31,7 @@ DEFAULT_MODEL = {"openrouter": "openai/gpt-6.1-sol", "anthropic": "claude-opus-5
 # (mercury once missed SN25's deal: the main model catches it). SN105's Zapier post waited 2.1 s for luna.
 FAST_MODEL = "inception/mercury-3"
 
-CATEGORIES = ["launch", "progress", "funding", "revenue", "partnership", "listing", "tokenomics", "other", "none"]
+CATEGORIES = ["launch", "progress", "funding", "revenue", "partnership", "listing", "tokenomics", "pivot", "other", "none"]
 
 SYSTEM = """You judge news about one Bittensor subnet for a trading bot. The bot buys the subnet's token the moment \
 important news appears and sells within minutes, so "important" means news that would make MANY traders buy this token \
@@ -56,6 +56,10 @@ Important only when it is NEW, CONCRETE and happening NOW (the categories to ans
   "the largest … out there", "the first … that can …"), a big training run done or nearly done, a record. The subnet's
   own numbers count (no outside confirmation needed), and it counts even when the release follows soon. Not a small
   step, a routine update, or miners' scores on its leaderboard
+- pivot: the team says the subnet ITSELF changes course — a new direction, a new incentive mechanism (IM) replacing the
+  current one, a new product replacing the old one, a relaunch of the subnet. It counts the moment the team says so, even
+  when the details come later ("we're designing a new direction, new IM will be announced tomorrow"). Not a change
+  inside the current mechanism (new weights, scoring, rules, scenarios, a benchmark refresh, an evaluation change)
 - other: a rare event of the same weight, e.g. the subnet being acquired or sold to a new owner
 
 NOT important, however it is worded:
@@ -65,7 +69,7 @@ NOT important, however it is worded:
 - competition and challenge news of the subnet's own miners: new rounds, challenges, scores, champions, benchmarks of
   miners' submissions, rules, evaluation changes, leaderboards (but a deal with another subnet, above, is important)
 - testnet releases, plans, roadmaps, upcoming or scheduled launches and changes, teasers, "big things coming" — plans
-  with no concrete result yet (a big result with numbers is progress, above)
+  with no concrete result yet (a big result with numbers is progress, the subnet changing course is pivot, above)
 - small research results, papers, model or dataset uploads, demos
 - recruiting miners, validators or GPU providers; capacity or demand claims
 - replies, support, bug fixes, maintenance, downtime, instructions, routine dev or weekly updates
@@ -121,6 +125,9 @@ NOT_NEWS = re.compile(r"^\s*(@\w+\s+)+|^\s*(yes|yeah|no|thanks|thank you|hi|hey|
 # time, and must not be looser (3 Nov, SN116: the AI timed out, "Testnet is LIVE" went to the bots as a launch)
 NOT_YET = re.compile(r"\b(testnet|coming soon|soon™?|in preparation|preparing|prepare|upcoming|roadmap|teaser|will (?:launch|go live|be live|release)"
                      r"|next (?:week|month)|tomorrow|competition|challenges?|leaderboard)\b", re.I)
+# the subnet itself changing course is news the moment the team says it, details later or not (5 Nov, SN11 TrajectoryRL:
+# "We're design a new direction of trajrl, new IM will be announced tomorrow" → +4% in 5 min, +6.5% in 15) — before NOT_YET
+PIVOT = re.compile(r"\b(new direction|pivot(?:ing|ed|s)?|new (?:incentive mechanism|IM)|relaunch(?:ing|ed|es)?)\b", re.I)
 
 
 @dataclass
@@ -148,6 +155,9 @@ def rules(text: str, tweet_age_s: float | None = None) -> Verdict:
         return Verdict(False, "none", f"the shared X post is {tweet_age_s / 3600:.0f} h old", "rules")
     if NOT_NEWS.search(text or ""):
         return Verdict(False, "none", "a reply, reminder or event — not news", "rules")
+    m = PIVOT.search(text or "")
+    if m:
+        return Verdict(True, "pivot", f"mentions “{m.group(0).strip()}” — the subnet changes course", "rules")
     m = NOT_YET.search(text or "")
     if m:
         return Verdict(False, "none", f"mentions “{m.group(0).strip()}” — not live news", "rules")

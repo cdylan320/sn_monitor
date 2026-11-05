@@ -302,7 +302,7 @@ within minutes — a launch live now, funding with an amount or a known investor
 with a well-known company, a NEW deal with another subnet (28 Oct: SN25 "has launched an open competition on
 @Apex_SN1" to improve its own code — its first announcement only), a major listing, a buyback / burn / emission cut, a
 sale of the subnet, a big update of its flagship product with concrete numbers that beat the best existing ones (its own
-numbers count and the release may follow soon — 4 Nov: SN38 "ChronoLLM-16B … beats every point-in-time model"). Ads for existing products, usage figures, a subnet's own competition rounds
+numbers count and the release may follow soon — 4 Nov: SN38 "ChronoLLM-16B … beats every point-in-time model"), the subnet itself changing course — a new direction, a new incentive mechanism, a new product replacing the old one, a relaunch — even with the details still to come (5 Nov: SN11 "a new direction of trajrl, new IM will be announced tomorrow", +6.5% in 15 min; a change inside the current mechanism — scoring, scenarios — is not). Ads for existing products, usage figures, a subnet's own competition rounds
 and results, testnet, "coming soon", uploads, recruiting are not; when in doubt, not important. (Tested on 2 days of posts: the 13 called important before → 0; 8 real news → 8.) The verdict and its reason are on the card ("News check") and travel with
 the news to the bots, which trade only important news. (21 Oct: 2 of the bots' 21 news trades made money.)
 

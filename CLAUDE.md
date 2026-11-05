@@ -63,7 +63,7 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
 - Every post is judged before it goes to the bots (`snmon/judge.py`): gpt-6.1-sol ×2 raced + inception/mercury-3 (luna
   until 29 Oct), whose "important" goes out at once (the user wants the speed; strict wording: 1 of 13 old false
   positives important, 11/11 real news, 0.5 s). STRICT since 24 Oct (user: "really important news only"): a launch live now, funding,
-  revenue / named customer, a well-known partner, a new deal with another subnet (SN25's competition on SN1 Apex, 28 Oct), a major listing, buyback / burn / emission cut, a sale, a BIG update of the subnet's flagship product with numbers that beat the best (self-reported counts, release may follow: SN38 ChronoLLM-16B, 4 Nov);
+  revenue / named customer, a well-known partner, a new deal with another subnet (SN25's competition on SN1 Apex, 28 Oct), a major listing, buyback / burn / emission cut, a sale, a BIG update of the subnet's flagship product with numbers that beat the best (self-reported counts, release may follow: SN38 ChronoLLM-16B, 4 Nov); the subnet itself changing course (new direction / new IM, details may come later: SN11 TrajectoryRL, 5 Nov — not a tweak of the current IM);
   NOT ads for existing products, usage figures, a subnet's own competition rounds / results, testnet, "coming soon", uploads. const is never left to the AI: everything he writes in a subnet's Discord channel (by his
   user id, `NEWS_CONST_DISCORD_IDS`), his X posts / reposts / replies, and a subnet quoting or sharing him = important.
   Not in SN120 / SN3's channels (`NEWS_CONST_CHAT_NETUIDS`, 28 Oct): he chats there, so he is scored like the team, AI-judged.
