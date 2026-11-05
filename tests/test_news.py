@@ -463,6 +463,14 @@ def test_consts_posts_are_always_important_without_asking_the_ai_and_go_to_the_b
         assert ev["important"] is True and ev["category"] == "const" and ev["judge"] == "const" and ev["who"] == "const"
         fields = cards[-1]["embeds"][0]["fields"]
         assert any(f["name"] == "News check (const)" and "Important" in f["value"] for f in fields)
+        # 5 Nov, SN116: const shared an X post — he goes to the bots before that post is fetched for the card
+
+        async def slow_tweet(url):
+            assert sent[-1]["text"].startswith("https://x.com/kirancodes"), "sent to the bots only after the X fetch"
+            return None
+        m.tweet = slow_tweet
+        await m._post(msg(CONST, "https://x.com/kirancodes/status/2118135320772534280", id="103"), CH, XPOST, "const")
+        assert len(sent) == 2 and sent[-1]["important"] and len(cards) == 2
         # on X: const's own activity, and a subnet quoting him
         tw = {"id": "2113000000000000000", "author": {"screen_name": "const_reborn", "name": "const"}, "text": "SN78 is cooking",
               "url": "https://x.com/const_reborn/status/2113000000000000000", "created_timestamp": time.time() - 5}

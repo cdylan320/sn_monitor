@@ -554,17 +554,25 @@ class NewsMonitor:
     async def _post(self, m: dict, ch: Channel, kind: str, who: str | None) -> None:
         feed_kind = {ANNOUNCE: "announcement", TEAM: "team"}.get(kind) or ("x_team" if who else "x_other")
         x = X_RE.search(m.get("content") or "")
-        tw = await self.tweet(x.group(0)) if x else None       # the judge reads the X post it shares too
         text = self._clean(m)
+
+        def publish(v) -> None:
+            self._publish(ch.netuid, feed_kind, who, f"discord #{ch.name}", text,
+                          f"https://discord.com/channels/{self.guild_id}/{ch.id}/{m['id']}", _ts(m), v)
+        verdict = None
         if who == "const" and ch.netuid not in self.const_chat:   # in his chat channels the AI judges him
             verdict = const_verdict("const posted in the subnet's channel")
         elif x and x.group(1).lower() in self.const_x:
             verdict = const_verdict("a share of const's X post")
-        else:
+        if verdict is not None:
+            # nothing to judge: to the bots at once, the X post it shares is fetched for the card only (5 Nov, SN116:
+            # const shared an X post, two bots' stakes landed before ours in the same block; the fetch takes up to 6 s)
+            publish(verdict)
+        tw = await self.tweet(x.group(0)) if x else None       # the judge reads the X post it shares too
+        if verdict is None:
             verdict = await self._verdict(ch.netuid, text, tw["description"] if tw else "",
                                           time.time() - x_posted(x.group(2)) if x else None)
-        self._publish(ch.netuid, feed_kind, who, f"discord #{ch.name}", text,
-                      f"https://discord.com/channels/{self.guild_id}/{ch.id}/{m['id']}", _ts(m), verdict)
+            publish(verdict)
         payload, p0 = self.build(m, ch, kind, who)
         if verdict is not None:
             payload["embeds"][0].setdefault("fields", []).append(verdict_field(verdict))
