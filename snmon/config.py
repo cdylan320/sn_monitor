@@ -27,6 +27,12 @@ DEFAULT_MEMPOOL_ENDPOINTS = (
 DEFAULT_WINDOWS = "1:2,5:3,25:4,300:7"
 
 
+def _env_any(*names: str) -> str:
+    """The first of these settings that is set, its name in any case (Chain_Update_Hook_URL = CHAIN_UPDATE_HOOK_URL)."""
+    upper = {k.upper(): v for k, v in os.environ.items()}
+    return next((v.strip() for v in (upper.get(n.upper()) for n in names) if v and v.strip()), "")
+
+
 def _bool(name: str, default: bool) -> bool:
     v = os.getenv(name)
     if v is None or not v.strip():
@@ -226,8 +232,10 @@ def load() -> Config:
         trend_signal_cooldown_hours=_float("TREND_SIGNAL_COOLDOWN_HOURS", 0.0),
         trend_signal_rearm_pct=_float("TREND_SIGNAL_REARM_PCT", 3.0),
         subnet_alerts=_bool("SUBNET_ALERTS", True),
-        # subnet lifecycle alerts go to the news channel (their own webhook if set; price channel as last resort)
-        subnet_webhook_url=(os.getenv("SUBNET_WEB_HOOK_URL") or "").strip() or news_webhook or webhook,
+        # chain updates (new subnet, start call, rename, owner coldkey swap announced / pending / done, owner change, removal,
+        # buybacks): their own channel (6 Nov, the user's call), else the news channel, else the price channel.
+        # CHAIN_UPDATE_HOOK_URL in any case (the user's .env: Chain_Update_Hook_URL); SUBNET_WEB_HOOK_URL is its old name
+        subnet_webhook_url=_env_any("CHAIN_UPDATE_HOOK_URL", "SUBNET_WEB_HOOK_URL") or news_webhook or webhook,
         news_webhook_url=news_webhook,
         news_discord_token=(os.getenv("NEWS_DISCORD_TOKEN") or "").strip().strip('"'),
         news_guild=(os.getenv("NEWS_GUILD_ID") or "").strip(),

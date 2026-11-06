@@ -77,8 +77,10 @@ All settings are listed in [.env.example](.env.example). Copy any you want into 
 
 ## Subnet lifecycle alerts
 
-These alerts cover changes to the subnets themselves, such as slots, owners and names. They post
-in the **news channel** (`NEWS_WEB_HOOK_URL`), or in their own if `SUBNET_WEB_HOOK_URL` is set. They're read from chain
+These alerts cover changes to the subnets themselves, such as slots, owners and names, plus the buybacks and exchange
+buys found on chain. They post in their own **chain updates channel** (`CHAIN_UPDATE_HOOK_URL`, any case; the old name
+`SUBNET_WEB_HOOK_URL` still works, 6 Nov), so the news channel keeps only Discord and X news; without that webhook they
+post in the news channel. The channel gets a "🟢 Chain updates are live" card at start. They're read from chain
 events on every block, about 1 s after the block:
 
 | Card | Chain event |

@@ -790,6 +790,24 @@ class App:
                 await asyncio.sleep(0)  # let the price hot path run between steps
         self.trend.evaluate(head, silent=True)
 
+    async def _chain_live(self) -> None:
+        """The chain-update channel's 'live' card, when it has a channel of its own (CHAIN_UPDATE_HOOK_URL)."""
+        own = self.cfg.subnet_webhook_url not in (self.cfg.news_webhook_url, self.cfg.price_webhook_url)
+        if not own or not self.cfg.startup_message or self.cfg.dry_run or self._recent_start("last_start_chain"):
+            return
+        f = self.subnets.facts
+        await self.subnet_discord.send({"embeds": [{
+            "title": "🟢 Chain updates are live",
+            "description": ("Posts here, read on chain every block: ⏳ / 🆕 new subnet (queued, registered) · "
+                            "🚀 start call (emissions start) · ✏️ rename / new website or GitHub · "
+                            "🔑 owner coldkey swap announced, seen pending, done (⏰ can be executed now) · "
+                            "👑 / 🗝️ owner or hotkey change · 💀 removed · ⚠️ next to be removed · 💰 buybacks · "
+                            "🏦 exchange buys.\n"
+                            f"Now: {f.get('subnets', '?')}/{f.get('limit', '?')} subnets · next to be removed "
+                            f"SN{f.get('prune', '?')} · registering costs {fmt.tao(f.get('cost', 0))} τ."),
+            "color": 0x5865F2,
+        }], "allowed_mentions": {"parse": []}})
+
     def _recent_start(self, name: str) -> bool:
         """True if we started < 10 min ago (pm2 restart / crash loop) — don't repeat 'live' messages."""
         stamp = ROOT / "data" / name
@@ -845,6 +863,7 @@ class App:
                                   f"{self.subnets.facts.get('subnets', '?')}/{self.subnets.facts.get('limit', '?')} · "
                                   f"next to be pruned SN{self.subnets.facts.get('prune')} · registering costs "
                                   f"{fmt.tao(self.subnets.facts.get('cost', 0))} τ"))
+                    await self._chain_live()
             except Exception:
                 log.exception("subnet watch start failed")
             await asyncio.sleep(60)

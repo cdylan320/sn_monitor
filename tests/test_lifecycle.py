@@ -251,6 +251,22 @@ def test_a_new_subnet_names_the_subnet_removed_from_its_slot_not_itself():
     asyncio.run(go())
 
 
+def test_chain_updates_go_to_their_own_channel_named_in_any_case():
+    # 6 Nov: the user set Chain_Update_Hook_URL — chain updates there, the news channel keeps Discord and X news
+    from unittest import mock
+    from snmon import config
+    base = {"PRICE_HOOK_URL": "https://d/price", "NEWS_WEB_HOOK_URL": "https://d/news"}
+    with mock.patch.object(config, "load_dotenv", lambda *a, **k: None):
+        for extra, want in (({"Chain_Update_Hook_URL": "https://d/chain"}, "https://d/chain"),
+                            ({"CHAIN_UPDATE_HOOK_URL": "https://d/chain2"}, "https://d/chain2"),
+                            ({"SUBNET_WEB_HOOK_URL": "https://d/old"}, "https://d/old"),
+                            ({"Chain_Update_Hook_URL": "  "}, "https://d/news"),
+                            ({}, "https://d/news")):
+            with mock.patch.dict(os.environ, {**base, **extra}, clear=True):
+                c = config.load()
+                assert c.subnet_webhook_url == want and c.news_webhook_url == "https://d/news", (extra, c.subnet_webhook_url)
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

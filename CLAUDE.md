@@ -40,6 +40,12 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
   (`BIG_TRADES_HOOK_URL`): every landed sell ≥ 20 τ and buy ≥ 50 τ (`BIG_TRADE_SELL_TAO` / `BIG_TRADE_BUY_TAO`), one
   message a block, ~30 an hour (60 when busy).
 
+## Chain updates channel
+- `CHAIN_UPDATE_HOOK_URL` (the user's .env spells it `Chain_Update_Hook_URL`; any case works, old name
+  `SUBNET_WEB_HOOK_URL`): every on-chain card — new subnet, start call, rename, owner coldkey swap announced / pending /
+  done, owner change, removal, buybacks, exchange buys (`snmon/lifecycle.py`). The news channel has only Discord + X news
+  (6 Nov, user's call).
+
 ## News sources
 - Subnet X accounts: fxtwitter (one account per request, each ~every 6 s). A private X list read with the user's X
   login (`snmon/xlist.py`, `NEWS_X_LIST`, account @cdylan321) exists but is OFF: X adds posts to a list 6-14 s late
