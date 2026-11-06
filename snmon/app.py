@@ -86,6 +86,10 @@ class App:
             self.subnet_discord = self._hook(cfg.subnet_webhook_url)   # the news channel unless given its own
             self.subnets = SubnetWatch(self.meta, self.subnet_discord, self._refresh_meta, ROOT / "data" / "subnets.json",
                                        dry_run=cfg.dry_run)
+            if cfg.buy_webhook_url:
+                self.subnets.buy_discord = self._hook(cfg.buy_webhook_url)
+            if cfg.announced_webhook_url:
+                self.subnets.announced_discord = self._hook(cfg.announced_webhook_url)
         self.news: NewsMonitor | None = None
         self.news_feed: NewsFeed | None = None
         if cfg.news_webhook_url and cfg.news_discord_token:
@@ -791,22 +795,35 @@ class App:
         self.trend.evaluate(head, silent=True)
 
     async def _chain_live(self) -> None:
-        """The chain-update channel's 'live' card, when it has a channel of its own (CHAIN_UPDATE_HOOK_URL)."""
-        own = self.cfg.subnet_webhook_url not in (self.cfg.news_webhook_url, self.cfg.price_webhook_url)
-        if not own or not self.cfg.startup_message or self.cfg.dry_run or self._recent_start("last_start_chain"):
+        """The 'live' card of each chain channel that has a webhook of its own: chain updates, buys, only announced."""
+        c, f = self.cfg, self.subnets.facts
+        if not c.startup_message or c.dry_run:
             return
-        f = self.subnets.facts
-        await self.subnet_discord.send({"embeds": [{
-            "title": "🟢 Chain updates are live",
-            "description": ("Posts here, read on chain every block: ⏳ / 🆕 new subnet (queued, registered) · "
-                            "🚀 start call (emissions start) · ✏️ rename / new website or GitHub · "
-                            "🔑 owner coldkey swap announced, seen pending, done (⏰ can be executed now) · "
-                            "👑 / 🗝️ owner or hotkey change · 💀 removed · ⚠️ next to be removed · 💰 buybacks · "
-                            "🏦 exchange buys.\n"
-                            f"Now: {f.get('subnets', '?')}/{f.get('limit', '?')} subnets · next to be removed "
-                            f"SN{f.get('prune', '?')} · registering costs {fmt.tao(f.get('cost', 0))} τ."),
-            "color": 0x5865F2,
-        }], "allowed_mentions": {"parse": []}})
+        own = lambda url, *others: bool(url) and url not in (c.news_webhook_url, c.price_webhook_url, *others)
+        now = (f"Now: {f.get('subnets', '?')}/{f.get('limit', '?')} subnets · next to be removed SN{f.get('prune', '?')} · "
+               f"registering costs {fmt.tao(f.get('cost', 0))} τ.")
+        buys_apart = own(c.buy_webhook_url, c.subnet_webhook_url)
+        cards = [
+            (own(c.subnet_webhook_url), self.subnet_discord, "last_start_chain", "🟢 Chain updates are live",
+             "Posts here, read on chain every block: ⏳ / 🆕 new subnet (queued, registered) · 🚀 start call (emissions "
+             "start) · ✏️ rename / new website or GitHub · 🔑 owner coldkey swap announced, seen pending, done (⏰ can be "
+             "executed now) · 👑 / 🗝️ owner or hotkey change · 💀 removed · ⚠️ next to be removed"
+             + ("." if buys_apart else " · 💰 buybacks · 🏦 exchange buys.") + "\n" + now),
+            (buys_apart, self.subnets.buy_discord, "last_start_buy", "🟢 Buybacks and exchange buys are live",
+             "Posts here, read on chain every block: 💰 a subnet's team buying its own token back (the chain's buyback "
+             "call, the owner's wallet, a named buyback wallet, or a new wallet paid by the owner) · 🏦 a new, quiet wallet "
+             "buying big with money straight from an exchange / bridge (it may be the owner)."),
+            (own(c.announced_webhook_url, c.subnet_webhook_url, c.buy_webhook_url), self.subnets.announced_discord,
+             "last_start_announced", "🟢 Announced, not done yet — live",
+             "Posts here what the chain says WILL happen: 🔑 an owner coldkey swap announced (it can be executed after the "
+             "wait, ~5 days — the subnet is being sold) and ⏰ when the wait is over · 🆕 a new subnet registered (its start "
+             "call, the emissions start, is still to come) · ⏳ a registration queued · ⚠️ a dissolve scheduled. "
+             "When it happens, its card is in the chain updates channel."),
+        ]
+        for apart, hook, stamp, title, text in cards:
+            if apart and hook is not None and not self._recent_start(stamp):
+                await hook.send({"embeds": [{"title": title, "description": text, "color": 0x5865F2}],
+                                 "allowed_mentions": {"parse": []}})
 
     def _recent_start(self, name: str) -> bool:
         """True if we started < 10 min ago (pm2 restart / crash loop) — don't repeat 'live' messages."""

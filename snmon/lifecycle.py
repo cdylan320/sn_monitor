@@ -38,6 +38,9 @@ REFRESH_ON = {"NetworkAdded", "NetworkRemoved", "SubnetIdentitySet", "SubnetIden
 IDENTITY_LABELS = {"name": "Name", "url": "Website", "github": "GitHub", "description": "Description",
                    "logo": "Logo", "discord": "Discord", "contact": "Contact"}
 PRUNE_HOLD = 600  # seconds a new prune candidate must hold before it is announced
+# announced on chain, not done yet: a registration queued, a new subnet (its start call to come), an owner coldkey swap
+# announced / executable now, a dissolve scheduled — the chain channel, and the "only announced" one (the user's, 6 Nov)
+ANNOUNCED = ("chain", "announced")
 
 
 def pick(a, i: int, *names: str):
@@ -85,6 +88,9 @@ class SubnetWatch:
         self._swaps_synced = 0.0
         self._pending_txs: dict[str, float] = {}   # swap transactions already announced from the mempool
         self.sent: list[dict] = []      # payloads, for dry runs and tests
+        self.sent_to: list[tuple] = []  # … and the channels each went to
+        self.buy_discord = None         # buybacks and exchange buys (BUY_HOOK_URL); None: the chain channel
+        self.announced_discord = None   # announced, not done yet (ONLY_ANNOUNCED_HOOK_URL); None: not posted twice
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -193,7 +199,7 @@ class SubnetWatch:
         await self._post(f"🆕 **NEW SUBNET** · **SN{n} {name}**".rstrip() + f" registered{replaced}",
                          self._embed(n, info, f"🆕 NEW SUBNET REGISTERED · SN{n}",
                                      f"```diff\n+ SN{n} {name}".rstrip() + (f"\n- {prev.name or f'SN{n}'} (previous subnet in this slot)" if prev else "") + "\n```",
-                                     fields, GREEN, block))
+                                     fields, GREEN, block), ANNOUNCED)
 
     async def _ev_NetworkRemoved(self, a, old, new, block) -> None:
         n = int(pick(a, 0, "netuid"))
@@ -249,7 +255,7 @@ class SubnetWatch:
                          self._embed(self._removed_now[0] if self._removed_now else None, None, "⏳ NEW SUBNET INCOMING — registration queued",
                                      f"```diff\n+ {name or 'new subnet'}\n```\n" + ("" if not self._removed_now else
                                      "It becomes tradable as a new subnet in a few minutes — its price history starts from zero."),
-                                     fields, BLUE, block))
+                                     fields, BLUE, block), ANNOUNCED)
 
     async def _ev_NetworkRegistrationCancelled(self, a, old, new, block) -> None:
         await self._post("❎ **Subnet registration cancelled** — the queued registration failed and its escrow was refunded",
@@ -265,22 +271,23 @@ class SubnetWatch:
                                      f"The owner scheduled this subnet to be dissolved at block #{at} (in about {eta(at - block)}).",
                                      [{"name": "Scheduled by", "value": acct(str(pick(a, 0, "account", "coldkey", "who"))), "inline": True}]
                                      + self._market(n, info),
-                                     RED, block))
+                                     RED, block), ANNOUNCED)
 
-    async def _owner_event(self, cold: str, old, new, block, emoji: str, what: str, detail: str, color: int, extra=None) -> None:
+    async def _owner_event(self, cold: str, old, new, block, emoji: str, what: str, detail: str, color: int, extra=None,
+                           to: tuple[str, ...] = ("chain",)) -> None:
         for n, info in sorted(new.items()):
             if n and (info.owner == cold or (old.get(n) and old[n].owner == cold)):
                 await self._post(f"{emoji} **{self._sn(n, info)}** — owner coldkey swap **{what}**",
                                  self._embed(n, info, f"{emoji} OWNER COLDKEY SWAP {what.upper()} · SN{n}", detail,
                                              [{"name": "Owner coldkey", "value": acct(cold), "inline": True}] + (extra or [])
-                                             + self._market(n, info), color, block))
+                                             + self._market(n, info), color, block), to)
 
     async def _ev_ColdkeySwapAnnounced(self, a, old, new, block) -> None:
         delay = self.facts.get("swap_delay") or 0
         when = f" It can be executed in about {eta(delay)} (block #{block + delay})." if delay else ""
         who = str(pick(a, 0, "who", "coldkey", "old_coldkey"))
         await self._owner_event(who, old, new, block, "🔑", "announced",
-                                f"The subnet owner announced moving ownership to a new coldkey.{when}", AMBER)
+                                f"The subnet owner announced moving ownership to a new coldkey.{when}", AMBER, to=ANNOUNCED)
         nets = sorted(n for n, i in new.items() if n and i.owner == who)
         if nets and delay:     # remember it: a card follows when the wait is over and the swap can be executed
             self.swaps[who] = {"exec": block + delay, "nets": nets, "notified": False}
@@ -525,7 +532,7 @@ class SubnetWatch:
                                              f"{', ' + eta(late) + ' ago' if late > 25 else ''}). The owner can complete the swap in any "
                                              f"block from now on — when it lands, the subnet changes hands.",
                                              [{"name": "Owner coldkey", "value": acct(owner), "inline": True}] + self._market(n, info),
-                                             AMBER, head))
+                                             AMBER, head), ANNOUNCED)
 
     async def _sync_swaps(self) -> None:
         """Read the announced swaps from the chain (after a restart, and as a check on the events)."""
@@ -594,7 +601,7 @@ class SubnetWatch:
         if b.detail:
             fields.append({"name": "Money", "value": b.detail[:1000], "inline": False})
         await self._post(f"💰 **BUYBACK** · **{self._sn(b.netuid, info)}** — {b.text()}",
-                         self._embed(b.netuid, info, f"💰 BUYBACK · SN{b.netuid}", f"How: {how}.", fields, GREEN, block))
+                         self._embed(b.netuid, info, f"💰 BUYBACK · SN{b.netuid}", f"How: {how}.", fields, GREEN, block), ("buy",))
 
     async def exchange_buy(self, b, block: int) -> None:
         """🏦 a new, quiet wallet bought big with money straight from an exchange / bridge — it MAY be the owner buying
@@ -610,13 +617,18 @@ class SubnetWatch:
                          self._embed(b.netuid, info, f"🏦 EXCHANGE BUY · SN{b.netuid}",
                                      "A new, quiet wallet bought with money straight from an exchange / bridge. It may be the "
                                      "owner buying back — nothing on chain ties it to the owner's wallet. Not traded.",
-                                     fields, BLUE, block))
+                                     fields, BLUE, block), ("buy",))
 
-    async def _post(self, headline: str, embed: dict) -> None:
+    async def _post(self, headline: str, embed: dict, to: tuple[str, ...] = ("chain",)) -> None:
+        """`to`: "chain" (CHAIN_UPDATE_HOOK_URL), "buy" (buybacks and exchange buys: BUY_HOOK_URL, else the chain
+        channel), "announced" (announced, not done yet: ONLY_ANNOUNCED_HOOK_URL, if set) — the user's split, 6 Nov."""
         payload = {"content": alerts.content([headline]), "embeds": [embed], "allowed_mentions": {"parse": []}}
         self.posted += 1
         self.sent.append(payload)
-        del self.sent[:-50]
+        self.sent_to.append(to)
+        del self.sent[:-50], self.sent_to[:-50]
         print(fmt.byellow(f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]} {headline[:170]}"))
         if not self.dry_run:
-            await self.discord.send(payload)
+            hooks = {"chain": self.discord, "buy": self.buy_discord or self.discord, "announced": self.announced_discord}
+            for d in dict.fromkeys(hooks[k] for k in to if hooks.get(k) is not None):   # one post per channel
+                await d.send(payload)

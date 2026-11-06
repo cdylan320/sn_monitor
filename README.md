@@ -80,7 +80,10 @@ All settings are listed in [.env.example](.env.example). Copy any you want into 
 These alerts cover changes to the subnets themselves, such as slots, owners and names, plus the buybacks and exchange
 buys found on chain. They post in their own **chain updates channel** (`CHAIN_UPDATE_HOOK_URL`, any case; the old name
 `SUBNET_WEB_HOOK_URL` still works, 6 Nov), so the news channel keeps only Discord and X news; without that webhook they
-post in the news channel. The channel gets a "🟢 Chain updates are live" card at start. They're read from chain
+post in the news channel. The channel gets a "🟢 Chain updates are live" card at start.
+💰 Buybacks and 🏦 exchange buys go to their own channel (`BUY_HOOK_URL`), and what is announced on chain but not done
+yet — an owner coldkey swap announced and ⏰ when it can be executed, a new subnet before its start call, a queued
+registration, a scheduled dissolve — is also posted to `ONLY_ANNOUNCED_HOOK_URL` (6 Nov, the user's split). They're read from chain
 events on every block, about 1 s after the block:
 
 | Card | Chain event |

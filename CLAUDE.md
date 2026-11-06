@@ -43,8 +43,10 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
 ## Chain updates channel
 - `CHAIN_UPDATE_HOOK_URL` (the user's .env spells it `Chain_Update_Hook_URL`; any case works, old name
   `SUBNET_WEB_HOOK_URL`): every on-chain card — new subnet, start call, rename, owner coldkey swap announced / pending /
-  done, owner change, removal, buybacks, exchange buys (`snmon/lifecycle.py`). The news channel has only Discord + X news
-  (6 Nov, user's call).
+  done, owner change, removal (`snmon/lifecycle.py`). The news channel has only Discord + X news (6 Nov, user's call).
+- `Buy_HOOK_URL` (`BUY_HOOK_URL`): 💰 buybacks + 🏦 exchange buys only. `Only_Announced_HOOK_URL`: announced on chain, not
+  done yet — swap announced / ⏰ executable, new subnet before its start call, registration queued, dissolve scheduled —
+  posted there AND in the chain channel (`_post(..., to=ANNOUNCED)`). All keys read in any case (`config._env_any`).
 
 ## News sources
 - Subnet X accounts: fxtwitter (one account per request, each ~every 6 s). A private X list read with the user's X

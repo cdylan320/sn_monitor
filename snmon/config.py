@@ -142,6 +142,8 @@ class Config:
     trend_signal_rearm_pct: float
     subnet_alerts: bool
     subnet_webhook_url: str
+    buy_webhook_url: str          # BUY_HOOK_URL / EXCHANGE_BUY_HOOK_URL — buybacks, exchange buys (empty: chain channel)
+    announced_webhook_url: str    # ONLY_ANNOUNCED_HOOK_URL — announced, not done yet (empty: not posted twice)
     news_webhook_url: str
     news_discord_token: str
     news_guild: str
@@ -236,6 +238,12 @@ def load() -> Config:
         # buybacks): their own channel (6 Nov, the user's call), else the news channel, else the price channel.
         # CHAIN_UPDATE_HOOK_URL in any case (the user's .env: Chain_Update_Hook_URL); SUBNET_WEB_HOOK_URL is its old name
         subnet_webhook_url=_env_any("CHAIN_UPDATE_HOOK_URL", "SUBNET_WEB_HOOK_URL") or news_webhook or webhook,
+        # buybacks and exchange buys found on chain: their own channel (6 Nov, the user's call; the .env names it
+        # Exchange_Buy_HOOK_URL), else with the chain updates
+        buy_webhook_url=_env_any("BUY_HOOK_URL", "EXCHANGE_BUY_HOOK_URL"),
+        # announced on chain, not done yet (owner coldkey swap announced, new subnet waiting for its start call,
+        # registration queued, dissolve scheduled): also in this channel when set (6 Nov, the user's call)
+        announced_webhook_url=_env_any("ONLY_ANNOUNCED_HOOK_URL", "ANNOUNCED_HOOK_URL"),
         news_webhook_url=news_webhook,
         news_discord_token=(os.getenv("NEWS_DISCORD_TOKEN") or "").strip().strip('"'),
         news_guild=(os.getenv("NEWS_GUILD_ID") or "").strip(),

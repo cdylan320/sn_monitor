@@ -267,6 +267,40 @@ def test_chain_updates_go_to_their_own_channel_named_in_any_case():
                 assert c.subnet_webhook_url == want and c.news_webhook_url == "https://d/news", (extra, c.subnet_webhook_url)
 
 
+def test_buys_go_to_the_buy_channel_and_what_is_announced_also_to_the_announced_one():
+    # 6 Nov, the user's split: chain updates · buybacks and exchange buys (Buy_HOOK_URL) · announced, not done yet
+    # (Only_Announced_HOOK_URL: a swap announced / executable now, a new subnet before its start call, a queued registration)
+    import types
+
+    class Hook:
+        def __init__(self):
+            self.sent = []
+
+        async def send(self, payload):
+            self.sent.append(payload["embeds"][0]["title"])
+    w, meta = watch({0: sub(0, "root"), 64: sub(64, "Chutes"), 70: sub(70, "Fugal", owner=NEW_OWNER)})
+    w.dry_run, w.discord, w.buy_discord, w.announced_discord = False, Hook(), Hook(), Hook()
+    buy = types.SimpleNamespace(netuid=64, tao=86.0, coldkey=OLD_OWNER, detail="", how="owner", text=lambda: "the owner bought 86 τ")
+
+    async def go():
+        await w.buyback(buy, 9432900)
+        await w.exchange_buy(buy, 9432901)
+        await w.on_events(9431616, [("ColdkeySwapAnnounced", (OLD_OWNER, "0xhash"))])
+        await w.post_due([OLD_OWNER], 9467616)
+        await w.on_events(9426442, [("FirstEmissionBlockNumberSet", (70, 9426443))])
+        meta.next = {**meta.subnets, 116: sub(116, "Carbon", owner=NEW_OWNER, reg=9420559)}
+        await w.on_events(9420559, [("NetworkAdded", (116, 1))])
+    asyncio.run(go())
+    assert w.buy_discord.sent == ["💰 BUYBACK · SN64", "🏦 EXCHANGE BUY · SN64"]
+    assert w.announced_discord.sent == ["🔑 OWNER COLDKEY SWAP ANNOUNCED · SN64", "⏰ OWNER COLDKEY SWAP CAN BE EXECUTED NOW · SN64",
+                                        "🆕 NEW SUBNET REGISTERED · SN116"]
+    assert w.discord.sent == ["🔑 OWNER COLDKEY SWAP ANNOUNCED · SN64", "⏰ OWNER COLDKEY SWAP CAN BE EXECUTED NOW · SN64",
+                              "🚀 EMISSIONS START · SN70", "🆕 NEW SUBNET REGISTERED · SN116"]   # no buys; the start call: done
+    w.buy_discord, w.announced_discord, w.discord.sent = None, None, []                       # neither set: all in the chain one
+    asyncio.run(w.buyback(buy, 9432902))
+    assert w.discord.sent == ["💰 BUYBACK · SN64"]
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):
