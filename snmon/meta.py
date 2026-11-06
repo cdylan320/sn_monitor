@@ -241,6 +241,13 @@ class Meta:
     def refresh(self, block_hash: str | None = None):
         return self._w.run(self._refresh(block_hash))
 
+    def block_hash(self, block: int):
+        return self.run(self._block_hash(block))
+
+    async def _block_hash(self, block: int) -> str:
+        sub = await self._substrate()
+        return await sub.get_block_hash(block)
+
     def trades(self, block: int, block_hash: str):
         """→ (trades, lifecycle events, buyback events, transfers) for one block."""
         return self._w.run(self._trades(block, block_hash))

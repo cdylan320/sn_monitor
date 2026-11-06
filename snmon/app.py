@@ -440,6 +440,8 @@ class App:
             self.trades_failed.add(block.number)
         if life and self.subnets:
             asyncio.create_task(self.subnets.on_events(block.number, life))
+        if self.subnets and block.number not in self.trades_failed:
+            self.subnets.checked(block.number)          # a restart reads the events of the blocks after this one
         if self.funding is not None and block.number not in self.trades_failed:
             try:
                 self.funding.log.add(block.number, time.time(), moved, [(t.coldkey, t.netuid, t.tao) for t in tr if not t.buy])
@@ -874,7 +876,8 @@ class App:
         while True:
             try:
                 if self.subnets and not started and self.meta.subnets:
-                    await self.subnets.start()   # compares with the view saved before the last shutdown
+                    # the events missed while down (up to the first block read in this run), then the saved view
+                    await self.subnets.start()
                     started = True
                     print(fmt.dim(f"{now_str()} ── subnet watch on · {len(self.subnets.known) - 1} subnets · slots "
                                   f"{self.subnets.facts.get('subnets', '?')}/{self.subnets.facts.get('limit', '?')} · "

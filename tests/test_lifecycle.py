@@ -301,6 +301,67 @@ def test_buys_go_to_the_buy_channel_and_what_is_announced_also_to_the_announced_
     assert w.discord.sent == ["💰 BUYBACK · SN64"]
 
 
+def test_a_new_subnet_names_the_one_it_replaced_even_when_the_slot_already_shows_its_own_name():
+    # 6 Nov, SN99: Thirty Spokes' identity was cleared (14:05:26), the chain then showed the queued newcomer's name "gani"
+    # on the old registration — the card said "gani registered — takes the slot of “gani”"
+    async def go():
+        w, meta = watch({0: sub(0, "root"), 99: sub(99, "Thirty Spokes", reg=8000000)})
+        w._remember(w.known)
+        cleared = SubnetInfo(99, "gani", "a", 252.0, 8000000, None, None, OLD_OWNER, "5Hot",
+                             {"name": "", "url": "", "github": "", "description": "", "logo": "", "discord": "", "contact": ""})
+        meta.next = {0: sub(0, "root"), 99: cleared}
+        await w.on_events(9447219, [("SubnetIdentityRemoved", (99,))])
+        meta.next = {0: sub(0, "root"), 99: sub(99, "gani", owner=NEW_OWNER, reg=9447220)}
+        await w.on_events(9447220, [("NetworkAdded", (99, 1))])
+        assert heads(w)[-1] == "🆕 **NEW SUBNET** · **SN99 gani** registered — takes the slot of “Thirty Spokes”"
+        e = w.sent[-1]["embeds"][0]
+        assert "- Thirty Spokes (previous subnet in this slot)" in e["description"]
+        assert any(f["name"] == "Start call" and "pending" in f["value"] for f in e["fields"])      # the user, 6 Nov
+        assert json.loads(w.path.read_text())["names"]["99"] == [9447220, "gani"]                 # kept on disk
+    import json
+    asyncio.run(go())
+
+
+def test_an_announced_swap_shows_when_it_is_expected():
+    # the user, 6 Nov: "mention expected completed time — when the swap will happen" (5 days after the announcement)
+    async def go():
+        w, meta = watch(BASE)
+        w.facts = await meta.facts()
+        t0 = time.time()
+        await w.on_events(9431616, [("ColdkeySwapAnnounced", (OLD_OWNER, "0xhash"))])
+        f = {x["name"]: x["value"] for x in w.sent[-1]["embeds"][0]["fields"]}
+        ts = int(f["Expected swap"].split("<t:")[1].split(":")[0])
+        assert abs(ts - (t0 + 36000 * 12)) < 5 and "block #9467616" in f["Expected swap"]     # 5 days, 12 s a block
+        await w.post_due([OLD_OWNER], 9467616)
+        assert any(x["name"] == "Expected swap" and "any block now" in x["value"] for x in w.sent[-1]["embeds"][0]["fields"])
+    asyncio.run(go())
+
+
+def test_after_a_restart_the_events_of_the_blocks_missed_are_read():
+    # 6 Nov: SN99 was pruned during a restart (#9447199) — neither the removal nor the queued registration got a card
+    async def go():
+        w, meta = watch({0: sub(0, "root"), 99: sub(99, "Thirty Spokes", reg=8000000)})
+        w.block_file.write_text("9447195")
+        w._resume_after = 9447195
+        read = []
+
+        async def block_hash(b):
+            return f"0x{b}"
+
+        async def trades(b, h):
+            read.append(b)
+            life = [("NetworkRemoved", (99,)), ("NetworkRegistrationQueued", QUEUED)] if b == 9447199 else []
+            return [], life, [], []
+        meta.block_hash, meta.trades = block_hash, trades
+        meta.next = {0: sub(0, "root")}
+        w.checked(9447203)                                  # the first block read in this run
+        await w.start()
+        assert read == [9447196, 9447197, 9447198, 9447199, 9447200, 9447201, 9447202]
+        assert [h.split(" · ")[0] for h in heads(w)][:2] == ["💀 **SUBNET DEREGISTERED**", "⏳ **NEW SUBNET INCOMING**"]
+        assert "SN99 Thirty Spokes" in heads(w)[0] and int(w.block_file.read_text()) == 9447203
+    asyncio.run(go())
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

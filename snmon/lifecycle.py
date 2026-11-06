@@ -20,6 +20,8 @@ deregistered (only once it has held that position for 10 minutes).
 """
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import json
 import logging
 import time
@@ -38,6 +40,7 @@ REFRESH_ON = {"NetworkAdded", "NetworkRemoved", "SubnetIdentitySet", "SubnetIden
 IDENTITY_LABELS = {"name": "Name", "url": "Website", "github": "GitHub", "description": "Description",
                    "logo": "Logo", "discord": "Discord", "contact": "Contact"}
 PRUNE_HOLD = 600  # seconds a new prune candidate must hold before it is announced
+CATCH_UP_BLOCKS = 600   # after a restart, the events of up to this many missed blocks (2 h) are read
 # announced on chain, not done yet: a registration queued, a new subnet (its start call to come), an owner coldkey swap
 # announced / executable now, a dissolve scheduled — the chain channel, and the "only announced" one (the user's, 6 Nov)
 ANNOUNCED = ("chain", "announced")
@@ -58,6 +61,13 @@ def pick(a, i: int, *names: str):
 
 def acct(a: str) -> str:
     return f"[{fmt.short(a)}]({alerts.account_url(a)})" if a else "—"
+
+
+def expected(blocks: int, at: int) -> str:
+    """When something `blocks` from now is expected: a Discord timestamp (each reader sees it in their own time zone) and
+    how far off, and the block — 12 s a block, so it may come a little earlier or later."""
+    ts = int(time.time() + blocks * BLOCK_SECONDS)
+    return f"**<t:{ts}:f>** (<t:{ts}:R>) · block #{at}"
 
 
 def eta(blocks: int) -> str:
@@ -87,6 +97,16 @@ class SubnetWatch:
         self.swaps: dict[str, dict] = {}
         self._swaps_synced = 0.0
         self._pending_txs: dict[str, float] = {}   # swap transactions already announced from the mempool
+        # each slot's last real name (its identity's) and the registration it belongs to — kept on disk: a new subnet names
+        # the one it replaced even when that one's identity was cleared first and the chain already shows the newcomer's
+        # name (6 Nov, SN99: "gani registered — takes the slot of “gani”", it was Thirty Spokes)
+        self._slot_names: dict[int, tuple[int, str]] = {}
+        self.block_file = path.with_name("lifecycle_block")   # the last block whose events were read (a restart catches up)
+        try:                                                  # read now, before this run's first block overwrites it
+            self._resume_after: int | None = int(self.block_file.read_text())
+        except (OSError, ValueError):
+            self._resume_after = None
+        self._first_live: int | None = None
         self.sent: list[dict] = []      # payloads, for dry runs and tests
         self.sent_to: list[tuple] = []  # … and the channels each went to
         self.buy_discord = None         # buybacks and exchange buys (BUY_HOOK_URL); None: the chain channel
@@ -95,7 +115,8 @@ class SubnetWatch:
     # ── lifecycle ────────────────────────────────────────────────────────
 
     async def start(self) -> None:
-        """Begin from the view saved before the last shutdown, so changes made while we were down are reported."""
+        """Begin from the view saved before the last shutdown, so changes made while we were down are reported: first the
+        chain events of the blocks missed (up to the first block read in this run), then the state."""
         self.known = dict(self.meta.subnets)
         try:
             saved = json.loads(self.path.read_text())
@@ -106,18 +127,72 @@ class SubnetWatch:
             for n in [n for n in self.known if str(n) not in saved.get("subnets", {})]:
                 del self.known[n]
             self._prune_announced = saved.get("prune")
+            self._slot_names = {int(n): (int(r), str(nm)) for n, (r, nm) in (saved.get("names") or {}).items()}
             self.swaps = {k: v for k, v in (saved.get("swaps") or {}).items() if isinstance(v, dict) and "exec" in v}
         except (OSError, ValueError, KeyError):
             pass
+        self._remember(self.known)
+        for _ in range(60 if self._resume_after is not None else 0):   # the first live block: where the gap ends (≤ 30 s)
+            if self._first_live is not None:
+                break
+            await asyncio.sleep(0.5)
+        await self._catch_up(self._first_live)
         await self.reconcile()
         await self._sync_swaps()
+
+    async def _catch_up(self, first_live: int | None, most: int = CATCH_UP_BLOCKS) -> None:
+        """The chain events of the blocks missed while the monitor was down (6 Nov: SN99 Thirty Spokes was pruned during a
+        restart — no card; its slot's new subnet came 4 minutes later). Up to `most` blocks; older changes the state
+        check (reconcile) still reports, without their block."""
+        last = self._resume_after
+        if last is None or not first_live or first_live - 1 <= last:
+            return
+        start = max(last + 1, first_live - most)
+        found, failed = 0, []
+        for b in range(start, first_live):
+            try:
+                tr, life, *_ = await self.meta.trades(b, await self.meta.block_hash(b))
+            except Exception as e:
+                failed.append((b, e))
+                continue
+            if life:
+                found += 1
+                await self.on_events(b, life)
+        log.info("subnet watch: caught up on #%d…#%d missed while down (%d with subnet events%s)", start, first_live - 1,
+                 found, f"; {len(failed)} unreadable, e.g. #{failed[0][0]}: {failed[0][1]}" if failed else "")
+
+    def checked(self, block: int) -> None:
+        """This block's events were read (kept on disk, so a restart knows where to catch up from)."""
+        if self._first_live is None:
+            self._first_live = block
+        try:
+            self.block_file.write_text(str(block))
+        except OSError:
+            pass
+
+    def _remember(self, view: dict) -> None:
+        for n, i in view.items():
+            name = (i.identity or {}).get("name") or ""
+            if n and name:
+                self._slot_names[n] = (i.registered_at, name)
+
+    def _slot_name(self, n: int, prev: SubnetInfo | None, info: SubnetInfo | None) -> SubnetInfo | None:
+        """The subnet that held slot `n` before `info`, with its real name — not the newcomer's, not an empty one."""
+        reg, name = self._slot_names.get(n, (None, ""))
+        newcomer = info.name if info else ""
+        if not name or name == newcomer or (info and reg == info.registered_at):
+            return prev
+        if prev is None:
+            return SubnetInfo(n, name, "", 0.0, reg or 0, None, None)
+        return dataclasses.replace(prev, name=name) if not prev.name or prev.name == newcomer else prev
 
     def note(self, prices: dict[int, int]) -> None:
         self.prices.update(prices)
 
     def _save(self) -> None:
         try:
-            self.path.write_text(json.dumps({"prune": self._prune_announced, "swaps": self.swaps, "subnets": {
+            self.path.write_text(json.dumps({"prune": self._prune_announced, "swaps": self.swaps,
+                                             "names": {n: list(v) for n, v in self._slot_names.items()}, "subnets": {
                 n: {"name": s.name, "symbol": s.symbol, "pool": s.pool_tao, "registered_at": s.registered_at,
                     "owner": s.owner, "owner_hotkey": s.owner_hotkey, "identity": s.identity}
                 for n, s in self.known.items()}}))
@@ -160,6 +235,7 @@ class SubnetWatch:
                 await handler(a, old, new, block)
             except Exception:
                 log.exception("subnet event %s failed", name)
+        self._remember(new)
         self.known = dict(new)
         self._save()
 
@@ -173,7 +249,7 @@ class SubnetWatch:
         if was is not None and info is not None and was.registered_at == info.registered_at:
             was = None
         prev = (gone[0] if gone and time.time() - gone[1] < 7 * 86400 else None) or was
-        await self._added(n, prev, info, block)
+        await self._added(n, self._slot_name(n, prev, info), info, block)
 
     async def _added(self, n: int, prev: SubnetInfo | None, info: SubnetInfo | None, block: int | None) -> None:
         if self._seen("added", n):
@@ -190,6 +266,8 @@ class SubnetWatch:
             if info.registered_at:
                 fields.append({"name": "Registered", "value": f"block #{info.registered_at}", "inline": True})
         fields += self._market(n, info) + self._slots()
+        fields.append({"name": "Start call", "value": "⏳ **pending** — emissions (and trading volume) start when the owner "
+                                                    "makes it; often days later", "inline": False})
         if info and info.identity.get("description"):
             fields.append({"name": "About", "value": info.identity["description"][:300], "inline": False})
         links = [f"[{k}]({u if u.startswith('http') else 'https://' + u})" for k, u in
@@ -203,7 +281,7 @@ class SubnetWatch:
 
     async def _ev_NetworkRemoved(self, a, old, new, block) -> None:
         n = int(pick(a, 0, "netuid"))
-        await self._removed(n, old.get(n), block)
+        await self._removed(n, self._slot_name(n, old.get(n), None), block)
 
     async def _removed(self, n: int, prev: SubnetInfo | None, block: int | None) -> None:
         if self._seen("removed", n):
@@ -269,7 +347,8 @@ class SubnetWatch:
         await self._post(f"⚠️ **{self._sn(n, info)}** — the owner scheduled **dissolving the subnet** in {eta(at - block)}",
                          self._embed(n, info, f"⚠️ DISSOLVE SCHEDULED · SN{n}",
                                      f"The owner scheduled this subnet to be dissolved at block #{at} (in about {eta(at - block)}).",
-                                     [{"name": "Scheduled by", "value": acct(str(pick(a, 0, "account", "coldkey", "who"))), "inline": True}]
+                                     [{"name": "Scheduled by", "value": acct(str(pick(a, 0, "account", "coldkey", "who"))), "inline": True},
+                                      {"name": "Expected dissolve", "value": expected(at - block, at), "inline": False}]
                                      + self._market(n, info),
                                      RED, block), ANNOUNCED)
 
@@ -284,10 +363,14 @@ class SubnetWatch:
 
     async def _ev_ColdkeySwapAnnounced(self, a, old, new, block) -> None:
         delay = self.facts.get("swap_delay") or 0
-        when = f" It can be executed in about {eta(delay)} (block #{block + delay})." if delay else ""
+        when = f" The swap can be executed after a wait of {eta(delay)}." if delay else ""
         who = str(pick(a, 0, "who", "coldkey", "old_coldkey"))
+        # the user, 6 Nov: show WHEN it is expected — the first block it can be executed (the owner does it then or later)
+        extra = [{"name": "Expected swap", "value": expected(delay, block + delay) + "\n(the owner can do it then or any "
+                                                    "time after)", "inline": False}] if delay else []
         await self._owner_event(who, old, new, block, "🔑", "announced",
-                                f"The subnet owner announced moving ownership to a new coldkey.{when}", AMBER, to=ANNOUNCED)
+                                f"The subnet owner announced moving ownership to a new coldkey — the subnet is probably "
+                                f"being sold.{when}", AMBER, extra=extra, to=ANNOUNCED)
         nets = sorted(n for n, i in new.items() if n and i.owner == who)
         if nets and delay:     # remember it: a card follows when the wait is over and the swap can be executed
             self.swaps[who] = {"exec": block + delay, "nets": nets, "notified": False}
@@ -445,20 +528,21 @@ class SubnetWatch:
             return
         for n in sorted(set(new) - set(old)):
             if n:
-                await self._added(n, None, new[n], None)
+                await self._added(n, self._slot_name(n, None, new[n]), new[n], None)
         for n in sorted(set(old) - set(new)):
             if n:
-                await self._removed(n, old[n], None)
+                await self._removed(n, self._slot_name(n, old[n], None), None)
         for n in sorted(set(old) & set(new)):
             if not n:
                 continue
             was, info = old[n], new[n]
             if was.registered_at != info.registered_at:
-                await self._added(n, was, info, None)
+                await self._added(n, self._slot_name(n, was, info), info, None)
             elif was.owner and info.owner and was.owner != info.owner:
                 await self._owner_changed(n, was.owner, info.owner, info, None, "The subnet's owner coldkey changed.")
             else:
                 await self._identity(n, was, info, None)
+        self._remember(new)
         self.known = dict(new)
         if time.time() - self._swaps_synced > 1800:
             await self._sync_swaps()
@@ -531,7 +615,9 @@ class SubnetWatch:
                                              f"The wait after the announcement is over (since block #{s['exec']}"
                                              f"{', ' + eta(late) + ' ago' if late > 25 else ''}). The owner can complete the swap in any "
                                              f"block from now on — when it lands, the subnet changes hands.",
-                                             [{"name": "Owner coldkey", "value": acct(owner), "inline": True}] + self._market(n, info),
+                                             [{"name": "Owner coldkey", "value": acct(owner), "inline": True}] + self._market(n, info)
+                                             + [{"name": "Expected swap", "value": "⏳ **any block now** — waiting for the "
+                                                                                   "owner to execute it", "inline": False}],
                                              AMBER, head), ANNOUNCED)
 
     async def _sync_swaps(self) -> None:

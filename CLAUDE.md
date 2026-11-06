@@ -47,6 +47,10 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
 - `Buy_HOOK_URL` (`BUY_HOOK_URL`): 💰 buybacks + 🏦 exchange buys only. `Only_Announced_HOOK_URL`: announced on chain, not
   done yet — swap announced / ⏰ executable, new subnet before its start call, registration queued, dissolve scheduled —
   posted there AND in the chain channel (`_post(..., to=ANNOUNCED)`). All keys read in any case (`config._env_any`).
+  Announced cards show the EXPECTED time (`lifecycle.expected`: a Discord <t:…> timestamp + block; a swap 36,000 blocks =
+  5 days after its announcement); a new subnet's card says "Start call: pending". After a restart the events of the
+  blocks missed are read (`data/lifecycle_block`, ≤ 600 blocks — 6 Nov: SN99 was pruned during a restart, no card), and
+  each slot's last real name is kept (`names` in data/subnets.json) so a new subnet names the one it replaced.
 
 ## News sources
 - Subnet X accounts: fxtwitter (one account per request, each ~every 6 s). A private X list read with the user's X
