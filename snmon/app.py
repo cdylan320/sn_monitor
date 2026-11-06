@@ -102,6 +102,8 @@ class App:
             self.news.judge = NewsJudge(cfg.news_ai_model, cfg.news_ai_timeout, race=cfg.news_ai_race,
                                         fast_model=cfg.news_ai_fast_model)
             self.news.dm_log = DmLog()           # every DM of the account, kept in data/dms.jsonl (./dms.sh)
+            if cfg.important_news_webhook_url:   # important news apart; the news channel keeps the rest (6 Nov)
+                self.news.important_discord = self._hook(cfg.important_news_webhook_url)
             self.news.const_ids = set(cfg.news_const_discord_ids)
             self.news.const_chat = set(cfg.news_const_chat_netuids)
             self.news.const_x = {h.lower() for h in cfg.news_x_accounts}
@@ -678,14 +680,32 @@ class App:
         print(fmt.dim(f"{now_str()} ── news monitor live in {self._news_where()}{x} · news judged by {self.news.judge.mode}"))
         if self.cfg.startup_message and not self.cfg.dry_run and not self._recent_start("last_start_news"):
             n = sum(1 for c in self.news.channels.values() if c.netuid is not None)
-            await self.news_discord.send({"embeds": [{
-                "title": "🟢 News monitor is live",
-                "description": (f"Watching **{n} subnet channels** in **{self.news.guild_name}** in real time. "
-                                "Posts here: 📢 @everyone announcements · 🐦 X posts · 📰 team updates "
-                                "(posts with links or real content by each subnet's team). Every card shows the "
-                                "price at the post and the market reaction after 5m, 15m and 1h."),
-                "color": 0x5865F2,
-            }], "allowed_mentions": {"parse": []}})
+            if self.news.important_discord is None:
+                await self.news_discord.send({"embeds": [{
+                    "title": "🟢 News monitor is live",
+                    "description": (f"Watching **{n} subnet channels** in **{self.news.guild_name}** in real time. "
+                                    "Posts here: 📢 @everyone announcements · 🐦 X posts · 📰 team updates "
+                                    "(posts with links or real content by each subnet's team). Every card shows the "
+                                    "price at the post and the market reaction after 5m, 15m and 1h."),
+                    "color": 0x5865F2,
+                }], "allowed_mentions": {"parse": []}})
+            else:
+                await self.news_discord.send({"embeds": [{
+                    "title": "🟢 News monitor is live",
+                    "description": (f"Watching **{n} subnet channels** in **{self.news.guild_name}** and the subnets' X "
+                                    "accounts in real time. Posts here: the news that is **not** judged important — "
+                                    "📢 announcements · 🐦 X posts · 📰 team updates. Important news has its own channel."),
+                    "color": 0x5865F2,
+                }], "allowed_mentions": {"parse": []}})
+                await self.news.important_discord.send({"embeds": [{
+                    "title": "🔥 Important news is live",
+                    "description": ("Posts here: only news judged **important** — a launch live now, funding, revenue or "
+                                    "a named customer, a big partner, a listing, a buyback or burn, a subnet sale, a big "
+                                    "update with record numbers, a subnet changing course — and everything const posts. "
+                                    "Each card shows why it is important, the price at the post and the market reaction "
+                                    "after 5m, 15m and 1h."),
+                    "color": 0xF59E0B,
+                }], "allowed_mentions": {"parse": []}})
 
     def _xl_timing_text(self) -> str:
         """The X list timing so far: how long after posting posts showed up in the list, and on fxtwitter when it was

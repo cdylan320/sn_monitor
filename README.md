@@ -309,7 +309,7 @@ with a well-known company, a NEW deal with another subnet (28 Oct: SN25 "has lau
 sale of the subnet, a big update of its flagship product with concrete numbers that beat the best existing ones (its own
 numbers count and the release may follow soon — 4 Nov: SN38 "ChronoLLM-16B … beats every point-in-time model"), the subnet itself changing course — a new direction, a new incentive mechanism, a new product replacing the old one, a relaunch — even with the details still to come (5 Nov: SN11 "a new direction of trajrl, new IM will be announced tomorrow", +6.5% in 15 min; a change inside the current mechanism — scoring, scenarios — is not). Ads for existing products, usage figures, a subnet's own competition rounds
 and results, testnet, "coming soon", uploads, recruiting are not; when in doubt, not important. (Tested on 2 days of posts: the 13 called important before → 0; 8 real news → 8.) The verdict and its reason are on the card ("News check") and travel with
-the news to the bots, which trade only important news. (21 Oct: 2 of the bots' 21 news trades made money.)
+the news to the bots, which trade only important news. With `IMPORTANT_NEWS_HOOK_URL` set (6 Nov), important news (and const's posts) has its own channel with the news check and the market reaction; the news channel keeps the rest, without either. (21 Oct: 2 of the bots' 21 news trades made money.)
 
 **Account:** a separate alt account that's a member of the server. Its token goes in
 `NEWS_DISCORD_TOKEN`. Automating a user account breaks Discord's terms, so the alt is what's at

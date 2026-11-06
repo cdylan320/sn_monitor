@@ -144,6 +144,7 @@ class Config:
     subnet_webhook_url: str
     buy_webhook_url: str          # BUY_HOOK_URL — buybacks, exchange buys (empty: chain channel)
     announced_webhook_url: str    # ONLY_ANNOUNCED_HOOK_URL — announced, not done yet (empty: not posted twice)
+    important_news_webhook_url: str   # IMPORTANT_NEWS_HOOK_URL — important news (empty: all news in the news channel)
     news_webhook_url: str
     news_discord_token: str
     news_guild: str
@@ -244,6 +245,9 @@ def load() -> Config:
         # announced on chain, not done yet (owner coldkey swap announced, new subnet waiting for its start call,
         # registration queued, dissolve scheduled): also in this channel when set (6 Nov, the user's call)
         announced_webhook_url=_env_any("ONLY_ANNOUNCED_HOOK_URL", "ANNOUNCED_HOOK_URL"),
+        # news judged important (and const's posts) in their own channel; the news channel keeps the rest, without the
+        # news check and market reaction (6 Nov, the user's call; the .env names it Important_news_HOOK_URL)
+        important_news_webhook_url=_env_any("IMPORTANT_NEWS_HOOK_URL"),
         news_webhook_url=news_webhook,
         news_discord_token=(os.getenv("NEWS_DISCORD_TOKEN") or "").strip().strip('"'),
         news_guild=(os.getenv("NEWS_GUILD_ID") or "").strip(),

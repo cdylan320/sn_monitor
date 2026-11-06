@@ -136,7 +136,7 @@ def test_news_reaches_the_trading_bots_before_the_card_with_its_kind():
     m.tweet = no_tweet
     sent = []
 
-    async def send(payload, netuid, p0):
+    async def send(payload, netuid, p0, verdict=None):
         sent.append(len(m.news_feed.events))                     # how many events were out when the card went
     m._send = send
     asyncio.run(m._post(msg("SAM", "@everyone mainnet launch today", mention_everyone=True), CH, ANNOUNCE, "team"))
@@ -428,7 +428,7 @@ def test_const_chatting_in_sn120_and_sn3_is_not_news_but_his_real_news_there_goe
             stats = {}
         m.judge = AI()
 
-        async def send(payload, netuid, p0):
+        async def send(payload, netuid, p0, verdict=None):
             pass
         m._send = send
         await m._post(news, ch, TEAM, "const")
@@ -455,7 +455,7 @@ def test_consts_posts_are_always_important_without_asking_the_ai_and_go_to_the_b
             stats = {}
         m.news_feed, m.judge = Feed(), NoAI()
 
-        async def send(payload, netuid, p0):
+        async def send(payload, netuid, p0, verdict=None):
             cards.append(payload)
         m._send = send
         await m._post(msg(CONST, "Nice work", type=19), CH, TEAM, "const")
@@ -506,7 +506,7 @@ def test_a_post_by_the_subnets_own_x_account_is_judged_by_the_ai_unless_the_owne
             stats = {}
         m.news_feed, m.judge = Feed(), NoAI()
 
-        async def send(payload, netuid, p0):
+        async def send(payload, netuid, p0, verdict=None):
             cards.append(payload)
         m._send = send
         q = {"id": "2113100000000000000", "author": {"screen_name": "TargonCompute", "name": "Targon"},
@@ -587,6 +587,52 @@ def test_a_teams_account_posts_for_the_one_of_its_subnets_the_post_names():
     items = [dict(own, created_timestamp=time.time() - 2), {"id": "2118000000000000000", "author": {"screen_name": "MacrocosmosAI"}}]
     asyncio.run(m._subnet_x_items("MacrocosmosAI", {1, 9, 13}, items))
     assert posted == [("MacrocosmosAI", "x_subnet", 9)]
+
+
+def test_important_news_goes_to_its_own_channel_and_the_rest_comes_without_check_or_reaction():
+    # the user's split, 6 Nov: Important_news_HOOK_URL gets news judged important (news check + market reaction); the news
+    # channel the rest, without either (SN27 Komms' podcast post: "Not important", +0.00% after 5m — just noise there)
+    from snmon.judge import Verdict
+
+    class Hook:
+        def __init__(self):
+            self.sent, self.edits = [], []
+
+        async def send(self, payload):
+            self.sent.append(payload)
+            return str(len(self.sent))
+
+        def edit_later(self, msg_id, payload):
+            self.edits.append(msg_id)
+
+    async def go():
+        m = nm()
+        m.discord, m.important_discord = Hook(), Hook()
+        reactions = []
+
+        async def reaction(card):
+            reactions.append(card.hook)
+        m._reaction = reaction
+
+        def card(title):
+            return {"content": title, "embeds": [{"title": title, "fields": [
+                {"name": "Price at post", "value": "0.002242 τ"},
+                {"name": "News check (AI)", "value": "x"}]}]}
+        await m._send(card("SN27 podcast"), 27, 2_242_000, Verdict(False, "none", "podcast promotion", "ai"))
+        await m._send(card("SN4 launch"), 4, 5_000_000, Verdict(True, "launch", "live today", "ai"))
+        await m._send(card("someone, no subnet"), None, None, None)
+        await asyncio.sleep(0)
+        common = [p["embeds"][0] for p in m.discord.sent]
+        assert [e["title"] for e in common] == ["SN27 podcast", "someone, no subnet"]
+        assert all([f["name"] for f in e["fields"]] == ["Price at post"] for e in common)        # no news check
+        important = m.important_discord.sent[0]["embeds"][0]
+        assert important["title"] == "SN4 launch" and important["fields"][1]["name"] == "News check (AI)"
+        assert reactions == [m.important_discord]                    # the market reaction: on the important card only
+        m.important_discord = None                                   # not set: everything as before, in the news channel
+        await m._send(card("SN27 podcast"), 27, 2_242_000, Verdict(False, "none", "podcast promotion", "ai"))
+        await asyncio.sleep(0)
+        assert m.discord.sent[-1]["embeds"][0]["fields"][1]["name"] == "News check (AI)" and reactions[-1] is m.discord
+    asyncio.run(go())
 
 
 if __name__ == "__main__":

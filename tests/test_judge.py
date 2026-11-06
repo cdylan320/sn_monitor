@@ -135,7 +135,7 @@ def test_a_discord_share_is_judged_with_the_shared_x_post_and_the_verdict_goes_t
                     "url": url, "fields": []}
         m.tweet = tweet
 
-        async def send(payload, netuid, p0):
+        async def send(payload, netuid, p0, verdict=None):
             cards.append(payload)
         m._send = send
         ch = Channel("C124", "124・swarm", 124, team_users={"TEAM"})

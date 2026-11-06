@@ -240,7 +240,7 @@ def test_a_subnet_sale_on_x_becomes_a_card_an_acquisition_for_the_bots_and_the_b
             def claim(self, n, handle, info):
                 claims.append((n, handle))
 
-        async def send(payload, netuid, p0):
+        async def send(payload, netuid, p0, verdict=None):
             cards.append(payload)
         m.news_feed, m.judge, m._send = Feed(), Judge(), send
         komms = post(2113571136776839182, author="KommsApp", age=14.0)

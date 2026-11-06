@@ -120,6 +120,7 @@ class Card:
     payload: dict
     price0: int | None
     posted: float
+    hook: object = None          # the channel it was posted in (its edits go there)
 
 
 class NewsMonitor:
@@ -128,6 +129,10 @@ class NewsMonitor:
                  min_team_chars: int = 120, dry_run: bool = False) -> None:
         self.client = DiscordUser(token)
         self.discord = discord
+        # important news in its own channel (Important_news_HOOK_URL, the user's split, 6 Nov): set → the news channel
+        # gets only the rest, without the news check and the market reaction
+        self.important_discord = None
+        self.sent_to: list = []          # the channel of each card, last 50 (tests, dry runs)
         self.meta = meta
         self.price_now = price_now
         self.change = change
@@ -596,19 +601,32 @@ class NewsMonitor:
             else:  # fall back to a link Discord can preview
                 lines.append(f"https://fxtwitter.com/{x.group(1)}/status/{x.group(2)}")
             payload["content"] = "\n".join(lines)
-        await self._send(payload, ch.netuid, p0)
+        await self._send(payload, ch.netuid, p0, verdict)
 
-    async def _send(self, payload: dict, netuid: int | None, p0: int | None) -> None:
+    async def _send(self, payload: dict, netuid: int | None, p0: int | None, verdict=None) -> None:
+        """Post a news card. With an important-news channel (the user's split, 6 Nov): news judged important goes there,
+        with its news check and the market reaction after 5m / 15m / 1h; the rest goes to the news channel without
+        either. Without one, everything goes to the news channel, as before."""
+        hook, where = self.discord, ""
+        if self.important_discord is not None:
+            if verdict is not None and verdict.important:
+                hook, where = self.important_discord, " in the important-news channel"
+            else:
+                for e in payload.get("embeds", [])[:1]:
+                    e["fields"] = [f for f in e.get("fields") or [] if not f.get("name", "").startswith("News check")]
+                p0 = None                                   # no market reaction on common news
         head = next((ln for ln in payload["content"].replace("\u200b", "").splitlines() if ln.strip()), "")
         print(fmt.byellow(f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]} {head[:160]}"))
         self.posted += 1
+        self.sent_to.append(hook)
+        del self.sent_to[:-50]
         if self.dry_run:
             return
-        msg_id = await self.discord.send(payload)
-        print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]}    ↳ news card posted (message {msg_id})")
+        msg_id = await hook.send(payload)
+        print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]}    ↳ news card posted{where} (message {msg_id})")
               if msg_id else fmt.red("    ↳ news card failed to post"))
         if msg_id and p0:
-            asyncio.create_task(self._reaction(Card(netuid, msg_id, payload, p0, time.time())))
+            asyncio.create_task(self._reaction(Card(netuid, msg_id, payload, p0, time.time(), hook)))
 
     async def _reaction(self, card: Card) -> None:
         """Edit the card at +5m / +15m / +1h with how the price moved since the post."""
@@ -623,7 +641,7 @@ class NewsMonitor:
             emb = card.payload["embeds"][0]
             field = {"name": "Market reaction", "value": " · ".join(marks) + f"\n{a} → {b} τ", "inline": False}
             emb["fields"] = [f for f in emb["fields"] if f["name"] != "Market reaction"] + [field]
-            self.discord.edit_later(card.msg_id, {"embeds": card.payload["embeds"]})
+            (card.hook or self.discord).edit_later(card.msg_id, {"embeds": card.payload["embeds"]})
 
     # ── X accounts (e.g. const, Bittensor's founder) ─────────────────────
 
@@ -1164,7 +1182,7 @@ class NewsMonitor:
         payload = {"content": alerts.content([f"{headline}{emoji} **{me.get('name') or handle}** (@{me.get('screen_name') or handle}) "
                                               f"{kind}{sub}: {preview}"]),
                    "embeds": [embed], "allowed_mentions": {"parse": []}}
-        await self._send(payload, n, p0)
+        await self._send(payload, n, p0, verdict)
 
     # ── persistence ──────────────────────────────────────────────────────
 

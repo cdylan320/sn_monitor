@@ -40,6 +40,11 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
   (`BIG_TRADES_HOOK_URL`): every landed sell ≥ 20 τ and buy ≥ 50 τ (`BIG_TRADE_SELL_TAO` / `BIG_TRADE_BUY_TAO`), one
   message a block, ~30 an hour (60 when busy).
 
+## News channels
+- `Important_news_HOOK_URL` (`IMPORTANT_NEWS_HOOK_URL`): news the judge calls important + all of const's posts, with
+  the news check and the market reaction (6 Nov, user's call). `NEWS_WEB_HOOK_URL`: the rest, WITHOUT news check and
+  market reaction (`NewsMonitor._send` routes by the verdict). The bots' feed is unchanged.
+
 ## Chain updates channel
 - `CHAIN_UPDATE_HOOK_URL` (the user's .env spells it `Chain_Update_Hook_URL`; any case works, old name
   `SUBNET_WEB_HOOK_URL`): every on-chain card — new subnet, start call, rename, owner coldkey swap announced / pending /
