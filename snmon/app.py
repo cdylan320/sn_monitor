@@ -23,6 +23,7 @@ from .chain import PRICE_ALL, RAO, Block, Feed, blake2_256, decode_prices, fetch
 from .config import BLOCK_SECONDS, ROOT, Config
 from .detector import Detector, Signal
 from .discord import Discord
+from .dmlog import DmLog
 from .lifecycle import SubnetWatch
 from .mempool import Mempool
 from .bars import BUCKET, Bars
@@ -96,6 +97,7 @@ class App:
                 min_team_chars=cfg.news_min_team_chars, dry_run=cfg.dry_run)
             self.news.judge = NewsJudge(cfg.news_ai_model, cfg.news_ai_timeout, race=cfg.news_ai_race,
                                         fast_model=cfg.news_ai_fast_model)
+            self.news.dm_log = DmLog()           # every DM of the account, kept in data/dms.jsonl (./dms.sh)
             self.news.const_ids = set(cfg.news_const_discord_ids)
             self.news.const_chat = set(cfg.news_const_chat_netuids)
             self.news.const_x = {h.lower() for h in cfg.news_x_accounts}

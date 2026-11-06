@@ -60,6 +60,8 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
   ("it may be the owner buying back"), NOT sent to the bots (user's call, 23 Oct) — `snmon/funding.py`, transfers and
   sells kept 7 days in `data/transfers.db`.
 - Discord: a user account's token (`NEWS_DISCORD_TOKEN`, now vic_x.; the first one was removed from the server on 21 Oct).
+  Every DM of that account (new / edited / deleted, reactions, files) is kept in `data/dms.jsonl` + `data/dm_files/`
+  (`snmon/dmlog.py`, read with `./dms.sh`; private, never pushed). 6 Nov: a DM was sent and deleted, nothing kept it.
 - Every post is judged before it goes to the bots (`snmon/judge.py`): gpt-6.1-sol ×2 raced + inception/mercury-3 (luna
   until 29 Oct), whose "important" goes out at once (the user wants the speed; strict wording: 1 of 13 old false
   positives important, 11/11 real news, 0.5 s). STRICT since 24 Oct (user: "really important news only"): a launch live now, funding,

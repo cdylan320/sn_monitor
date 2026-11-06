@@ -162,6 +162,7 @@ class NewsMonitor:
         self.ready = False
         self.news_feed = None       # NewsFeed: news events for the trading bots (set by the app when NEWS_FEED_PORT is on)
         self.judge = None           # NewsJudge: is a post important news? (set by the app)
+        self.dm_log = None          # DmLog: every DM of this account kept in data/dms.jsonl (set by the app)
         self.const_ids: set[str] = set()   # const's Discord user id(s): all he posts is news, always important (set by the app)
         self.const_chat: set[int] = set()  # … but not in these subnets' channels (SN120, SN3): he chats there all day
         self.const_x: set[str] = set()     # … and his X account(s), lowercase (NEWS_X_ACCOUNTS)
@@ -178,6 +179,11 @@ class NewsMonitor:
             await self.client.start()
         await self.load_structure()
         self._restore_state(x=False)
+        if self.dm_log is not None:
+            try:
+                await self.dm_log.start(self.client)
+            except Exception:   # noqa: BLE001 — the DM log must never stop the news
+                log.exception("DM log: could not list the DM chats")
         self.client.on_event = self._on_event
         self.client.on_ready = self._on_gateway_ready
         if self.client.connected:               # started again later: the gateway is up already, READY has passed
@@ -239,6 +245,8 @@ class NewsMonitor:
     # ── intake ───────────────────────────────────────────────────────────
 
     def _on_event(self, t: str, d: dict):
+        if self.dm_log is not None and isinstance(d, dict) and not d.get("guild_id"):
+            return self.dm_log.on_event(t, d)      # a DM (or READY): kept, even when the sender deletes it
         if not isinstance(d, dict) or d.get("guild_id") != self.guild_id:
             return None
         if t in ("MESSAGE_CREATE", "PASSIVE_UPDATE_V1", "PASSIVE_UPDATE_V2"):
