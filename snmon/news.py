@@ -576,7 +576,7 @@ class NewsMonitor:
         if who == "const" and ch.netuid not in self.const_chat:   # in his chat channels the AI judges him
             verdict = const_verdict("const posted in the subnet's channel")
         elif x and x.group(1).lower() in self.const_x:
-            verdict = const_verdict("a share of const's X post")
+            verdict = const_verdict(f"a share of {x_who(x.group(1))}'s X post")
         if verdict is not None:
             # nothing to judge: to the bots at once, the X post it shares is fetched for the card only (5 Nov, SN116:
             # const shared an X post, two bots' stakes landed before ours in the same block; the fetch takes up to 6 s)
@@ -1130,9 +1130,9 @@ class NewsMonitor:
         if verdict is not None:
             pass
         elif handle.lower() in self.const_x:
-            verdict = const_verdict(f"const {kind} on X")
+            verdict = const_verdict(f"{x_who(handle)} {kind} on X")
         elif ((quote.get("author") or {}).get("screen_name") or "").lower() in self.const_x:
-            verdict = const_verdict("it quotes const")
+            verdict = const_verdict(f"it quotes {x_who((quote.get('author') or {}).get('screen_name'))}")
         elif feed_kind == "x_subnet" and self.owner_important:
             # the subnet's owner speaking on its own account (22 Oct: @TargonCompute's quote was judged "not important",
             # then 400 τ was staked into SN4 in the next blocks)
@@ -1273,10 +1273,20 @@ def x_posted(status_id: str | int) -> float:
     return ((int(status_id) >> 22) + 1288834974657) / 1000
 
 
+def x_who(handle: str | None) -> str:
+    """How a watched X account (NEWS_X_ACCOUNTS) is named on cards and in verdicts: const, or @handle (Mark Jeffrey:
+    "@markjeffrey" — the bots tell his posts from const's by this name in the verdict, 9 Nov)."""
+    h = (handle or "").lstrip("@")
+    return "const" if h.lower() == "const_reborn" else f"@{h}"
+
+
 def verdict_field(v) -> dict:
     """The judge's verdict as a card field."""
     head = f"🔥 **Important** · {v.category}" if v.important else "▫️ Not important"
     by = {"ai": "AI", "const": "const", "owner": "the subnet's own account"}.get(v.by, "rules")
+    named = re.search(r"@\w+", v.reason or "") if v.by == "const" else None
+    if named:                                    # another watched account than const (Mark Jeffrey)
+        by = named.group(0)
     return {"name": f"News check ({by})", "value": f"{head} — {v.reason}"[:1000], "inline": False}
 
 

@@ -252,7 +252,9 @@ def load() -> Config:
         news_discord_token=(os.getenv("NEWS_DISCORD_TOKEN") or "").strip().strip('"'),
         news_guild=(os.getenv("NEWS_GUILD_ID") or "").strip(),
         news_min_team_chars=_int("NEWS_MIN_TEAM_CHARS", 120),
-        news_x_accounts=[h.lstrip("@") for h in _list("NEWS_X_ACCOUNTS", ("const_reborn",))],
+        # watched X accounts, each one's posts / reposts / replies always important, and a subnet quoting or sharing
+        # him too: const, and Mark Jeffrey (the user's rule, 9 Nov)
+        news_x_accounts=[h.lstrip("@") for h in _list("NEWS_X_ACCOUNTS", ("const_reborn", "markjeffrey"))],
         news_const_discord_ids=_list("NEWS_CONST_DISCORD_IDS", ("389189199514959893",)),
         news_const_chat_netuids={int(x) for x in _list("NEWS_CONST_CHAT_NETUIDS", ("3", "120")) if x.isdigit()},
         news_x_subnet_important=_bool("NEWS_X_SUBNET_IMPORTANT", False),

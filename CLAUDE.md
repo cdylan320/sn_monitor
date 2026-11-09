@@ -88,6 +88,9 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
   Not in SN120 / SN3's channels (`NEWS_CONST_CHAT_NETUIDS`, 28 Oct): he chats there, so he is scored like the team, AI-judged.
   A subnet's own X account's post / quote (its owner) is judged by the AI like any other (the user's call, 23 Oct;
   `NEWS_X_SUBNET_IMPORTANT=true` would make it always important).
+- Mark Jeffrey (@markjeffrey, 9 Nov, user's call) = const on X: in `NEWS_X_ACCOUNTS` (always important, a subnet quoting /
+  sharing him too; verdicts name him "@markjeffrey …" — `news.x_who`). The trader trades him like const: its own watcher,
+  const's size and exits, switch `MARK_TRADE`, `MARK_ACCOUNT`, `MARK_POLL_SECONDS` (1 s; const 0.5 s).
 
 ## Trading rules (the user's decisions; `README.md` and `.env.example` of sn_trader are the reference)
 - New subnet (start call): sells everything, stakes all (`LAUNCH_MAX_STAKE_TAO=0`), sent in the block after the start call

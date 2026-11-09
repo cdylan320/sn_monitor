@@ -254,7 +254,7 @@ channels. Server-wide staff roles count too.
 a safety net, and after a restart, posts from the last 30 minutes are caught up.
 
 **X, directly.** A post shared in a channel is usually minutes behind the post itself, so X is watched too:
-the accounts in `NEWS_X_ACCOUNTS` (const), and **every subnet's own X account** (`NEWS_X_SUBNETS`). Those are found
+the accounts in `NEWS_X_ACCOUNTS` (const, and Mark Jeffrey since 9 Nov — both always important), and **every subnet's own X account** (`NEWS_X_SUBNETS`). Those are found
 automatically — the X account the subnet's website links most (else its GitHub README) — and only watched when its
 X profile points back to the subnet (its website, "SN85" in the bio, or its name). 61 of 128 subnets had one on 20 Oct;
 `NEWS_X_SUBNET_HANDLES=72:NATIXNetwork,21:-` adds or corrects them by hand. A subnet whose identity or owner changes

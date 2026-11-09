@@ -436,6 +436,52 @@ def test_const_chatting_in_sn120_and_sn3_is_not_news_but_his_real_news_there_goe
     asyncio.run(go())
 
 
+def test_mark_jeffreys_posts_are_important_like_consts_and_name_him():
+    # the user's rule, 9 Nov: @markjeffrey is watched like const — his posts, a subnet quoting him, a share of his post;
+    # the verdict names him so the bots trade it under MARK_TRADE
+    from snmon.news import verdict_field, x_who
+    assert x_who("const_reborn") == "const" and x_who("MarkJeffrey") == "@MarkJeffrey"
+
+    async def go():
+        m = nm()
+        m.const_x = {"const_reborn", "markjeffrey"}
+        m.meta.subnets = {8: m.meta.info(8)}
+        m.dry_run = True
+        sent, cards = [], []
+
+        class Feed:
+            def publish(self, ev):
+                sent.append(ev)
+                return 1
+
+        class NoAI:
+            async def judge(self, *a, **k):
+                raise AssertionError("Mark's posts are not left to the AI")
+            stats = {}
+        m.news_feed, m.judge = Feed(), NoAI()
+
+        async def send(payload, netuid, p0, verdict=None):
+            cards.append(payload)
+        m._send = send
+        tw = {"id": "2120000000000000000", "author": {"screen_name": "markjeffrey", "name": "Mark Jeffrey"},
+              "text": "SN8 is the future of prop trading", "url": "https://x.com/markjeffrey/status/2120000000000000000",
+              "created_timestamp": time.time() - 3}
+        await m._post_x(tw, "markjeffrey")
+        ev = sent[-1]
+        assert ev["important"] is True and ev["judge"] == "const" and ev["why"] == "@markjeffrey posted on X"
+        assert ev["who"] == "markjeffrey" and ev["netuid"] == 8
+        f = next(x for x in cards[-1]["embeds"][0]["fields"] if x["name"].startswith("News check"))
+        assert f["name"] == "News check (@markjeffrey)"
+        q = {"id": "2120000000000000001", "author": {"screen_name": "VantaTrading", "name": "Vanta"}, "text": "thanks!",
+             "quote": {"text": "SN8 rocks", "author": {"screen_name": "markjeffrey"}},
+             "url": "https://x.com/VantaTrading/status/2120000000000000001", "created_timestamp": time.time() - 3}
+        await m._post_x(q, "VantaTrading", feed_kind="x_subnet", netuid=8)
+        assert sent[-1]["important"] is True and sent[-1]["why"] == "it quotes @markjeffrey"
+        assert verdict_field(const_verdict("const posted on X"))["name"] == "News check (const)"     # const unchanged
+    from snmon.news import const_verdict
+    asyncio.run(go())
+
+
 def test_consts_posts_are_always_important_without_asking_the_ai_and_go_to_the_bots_as_such():
     async def go():
         m = nm()
