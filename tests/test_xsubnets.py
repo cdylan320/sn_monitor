@@ -316,6 +316,81 @@ def test_looks_of_one_account_may_overlap_so_a_slow_look_does_not_skip_its_next_
 from snmon import news as xsubnets_news  # noqa: E402
 
 
+def test_founders_and_owners_are_found_from_the_subnets_own_account_and_watched_for_it():
+    # the user, 10 Nov: SN71's CEO @gavinzaentz posted; the monitor saw it 11 minutes later, shared in Discord
+    xsubnets.CACHE_FILE.unlink(missing_ok=True)
+    gavin = {"screen_name": "gavinzaentz", "name": "Gavin", "description": "CEO @LeadpoetAI, the AI sales agent that finds "
+             "companies ready to buy", "website": {"url": "http://leadpoet.com/?utm_source=x"}}
+    f = xsubnets.founder_of
+    assert f(71, "Leadpoet", "https://leadpoet.com", "LeadpoetAI", gavin) == "CEO · @LeadpoetAI"
+    assert f(71, "Leadpoet", "https://leadpoet.com", "LeadpoetAI", {"description": "big fan of @LeadpoetAI"}) == ""
+    assert f(71, "Leadpoet", "https://leadpoet.com", "LeadpoetAI", {"description": "founder of Acme · gm"}) == ""
+    assert f(64, "Chutes", "https://chutes.ai", "chutes_ai", {"description": "building SN64"}) == "building · SN64"
+    assert f(64, "Chutes", "https://chutes.ai", "chutes_ai", {"description": "co-founder",
+                                                              "website": {"url": "https://chutes.ai"}}) == "co-founder · the subnet's website"
+    iota = {"screen_name": "IOTA_SN9", "description": "Incentivised Orchestrated Training Architecture. Built by @macrocosmosai"}
+    assert f(1, "Apex", "https://apex.macrocosmos.ai", "macrocosmosai", iota) == ""        # SN9's own account, not SN1's
+    assert f(9, "iota", "https://iota.macrocosmos.ai", "macrocosmosai", iota) == "Built · @macrocosmosai"
+    q48 = {"screen_name": "QuantumSN48", "description": "Bittensor Subnet 48 compute; building a market with @qbittensorlabs"}
+    assert f(63, "Quantum", "https://qbittensorlabs.com", "qbittensorlabs", q48) == ""
+    subnets = {71: SubnetInfo(71, "Leadpoet", "", 0, 1, None, "https://leadpoet.com"),
+               64: SubnetInfo(64, "Chutes", "", 0, 1, None, "https://chutes.ai")}
+    acc = xsubnets.SubnetAccounts({71: "LeadpoetAI", 64: "chutes_ai"}, skip={"const_reborn"}, founders={8: ["0xarrash"]})
+    items = [{"id": "3", "author": {"screen_name": "gavinzaentz"}, "reposted_by": {"screen_name": "LeadpoetAI"}},
+             {"id": "2", "author": {"screen_name": "LeadpoetAI"}, "text": "thanks @const_reborn and @fan123!",
+              "quote": {"author": {"screen_name": "pranav_lp"}}},
+             {"id": "1", "author": {"screen_name": "someone"}, "text": "not its post @nobody"}]
+    talks = xsubnets_news.x_talks_to(items, "LeadpoetAI")
+    assert talks == ["gavinzaentz", "pranav_lp", "const_reborn", "fan123"]
+    acc.note({71}, talks)
+    assert "const_reborn" not in acc.candidates[71]                       # const is watched for himself
+    profiles = {"gavinzaentz": gavin, "pranav_lp": {"screen_name": "pranav_lp", "description": "cofounder @LeadpoetAI"},
+                "fan123": {"screen_name": "fan123", "description": "I love sales"}}
+    reads = []
+
+    async def profile(session, h):
+        reads.append(h)
+        return profiles.get(h)
+    xsubnets.PROFILE_PACE_S, pace = 0, xsubnets.PROFILE_PACE_S
+    try:
+        assert asyncio.run(acc.check_founders(None, subnets, profile)) == 3
+        assert asyncio.run(acc.check_founders(None, subnets, profile)) == 0   # read once a week, not every round
+    finally:
+        xsubnets.PROFILE_PACE_S = pace
+    assert sorted(acc.founder_handles()[71]) == ["gavinzaentz", "pranav_lp"] and acc.founder_handles()[8] == ["0xarrash"]
+    watch = acc.accounts()
+    assert watch["gavinzaentz"] == ("gavinzaentz", {71}) and watch["leadpoetai"] == ("LeadpoetAI", {71})
+    assert acc.is_founder("GavinZaentz") and not acc.is_founder("LeadpoetAI") and acc.is_founder("0xarrash")
+    assert acc.founder_why("gavinzaentz") == "CEO · @LeadpoetAI" and acc.founder_why("0xarrash") == "added by hand"
+    again = xsubnets.SubnetAccounts({71: "LeadpoetAI"})                     # kept on disk
+    assert "gavinzaentz" in again.founders[71] and again.checked["fan123"][1] == ""
+    xsubnets.CACHE_FILE.unlink(missing_ok=True)
+
+
+def test_a_founders_account_gets_half_the_looks_and_its_card_says_whose_it_is():
+    acc = xsubnets.SubnetAccounts({71: "LeadpoetAI"}, founders={71: ["gavinzaentz"]})
+    m = NewsMonitor("x", None, type("M", (), {"subnets": {}, "info": lambda self, n: SubnetInfo(n, "Leadpoet", "", 0, 1,
+                                                                                                None, None)})(),
+                    price_now=lambda n: None, change=lambda n, b: None)
+    m._x_accounts = acc
+    now_id = str(int((time.time() - 3600) * 1000 - 1288834974657) << 22)
+    m._x_ids = {"leadpoetai": [now_id], "gavinzaentz": [now_id]}
+    assert m._x_weight("leadpoetai") == 2.0 and m._x_weight("gavinzaentz") == 1.0
+    cards = []
+
+    async def send(payload, netuid, p0, verdict=None):
+        cards.append(payload)
+    m._send, m.dry_run = send, True
+    t = {"id": "2120227715827818827", "author": {"screen_name": "gavinzaentz", "name": "Gavin"},
+         "text": "Fable 5.2 just killed sales.", "url": "https://x.com/gavinzaentz/status/2120227715827818827",
+         "created_timestamp": time.time() - 3}
+    asyncio.run(m._post_x(t, "gavinzaentz", feed_kind="x_subnet", netuid=71, verdict=False or None))
+    e = cards[-1]["embeds"][0]
+    assert "founder's account" in cards[-1]["content"]
+    assert any(f["name"] == "Account" and "added by hand" in f["value"] for f in e["fields"])
+    xsubnets.CACHE_FILE.unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):

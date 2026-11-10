@@ -77,6 +77,16 @@ def _handles(name: str) -> dict[int, str]:
     return out
 
 
+def _founders(name: str, default: tuple[str, ...] = ()) -> dict[int, list[str]]:
+    """NEWS_X_FOUNDER_HANDLES=71:gavinzaentz,8:0xarrash → {71: ["gavinzaentz"], 8: ["0xarrash"]}."""
+    out: dict[int, list[str]] = {}
+    for item in _list(name, default):
+        n, _, h = item.partition(":")
+        if n.strip().isdigit() and h.strip():
+            out.setdefault(int(n), []).append(h.strip().lstrip("@"))
+    return out
+
+
 def _netuids(name: str) -> set[int]:
     out: set[int] = set()
     for part in (os.getenv(name) or "").replace(" ", "").split(","):
@@ -157,6 +167,7 @@ class Config:
     news_x_subnets: bool          # watch every subnet's own X account (found from its website, checked on its profile)
     news_x_subnet_rate: float     # … timeline requests per second for them, in all (one account after another)
     news_x_subnet_handles: dict   # netuid → handle added / corrected by hand ("" = watch none)
+    news_x_founder_handles: dict  # netuid → [handle]: founders' / owners' accounts added by hand (NEWS_X_FOUNDER_HANDLES)
     news_x_list: bool             # … also all of them in one request: a private X list read with the X login below
     news_x_list_seconds: float    # … read about this often (X allows 500 reads per 15 minutes)
     news_buybacks: bool           # a subnet's team buying its token back (on chain) → a card and an event for the bots
@@ -262,6 +273,9 @@ def load() -> Config:
         news_x_subnets=_bool("NEWS_X_SUBNETS", True),
         news_x_subnet_rate=_float("NEWS_X_SUBNET_RATE", 16.0),
         news_x_subnet_handles=_handles("NEWS_X_SUBNET_HANDLES"),
+        # founders' / owners' X accounts watched for their subnet, besides those found from the subnet's own account
+        # (the user, 10 Nov: SN71's CEO @gavinzaentz)
+        news_x_founder_handles=_founders("NEWS_X_FOUNDER_HANDLES", ("71:gavinzaentz",)),
         news_x_list=_bool("NEWS_X_LIST", False),
         news_x_list_seconds=_float("NEWS_X_LIST_SECONDS", 2.0),
         news_buybacks=_bool("NEWS_BUYBACKS", True),

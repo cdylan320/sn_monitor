@@ -268,6 +268,11 @@ on chain (sold, renamed, new website) gets its X account looked up again at once
 `NEWS_X_SUBNET_RATE` (16) looks a second in all, two of one account may overlap — each about every 4.2 s; a failed look (the free API fails ~40% of
 requests) is tried again at once, up to 2 times. A subnet's own post or quote becomes a card
 and goes to the trading bots at once (kind `x_subnet`); a later share of it in Discord is not reported again.
+The **founders' and owners' accounts** are watched for their subnet too (10 Nov): the accounts a subnet's own account
+reposts, quotes, replies to or mentions, and the other X accounts its website links, whose bio has a role word (founder,
+co-founder, CEO, CTO, owner, building …) **and** names the subnet (its @account, "SN71", its name, or the same website) —
+at most 3 a subnet, with half the looks of the subnet's own account. Their posts are judged and sent like the subnet's
+own; `NEWS_X_FOUNDER_HANDLES=71:gavinzaentz` adds any by hand.
 One account can post for a team's several subnets (@MacrocosmosAI: SN1 Apex, SN9 iota, SN13 Data Universe): its post
 goes to the one subnet it names, in any case, ordinary word or not ("Introducing IOTA Decide 4B" → SN9); naming none
 or several, it gets no subnet and is not sent. The same holds when another account (const) quotes, mentions or replies

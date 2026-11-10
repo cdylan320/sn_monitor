@@ -10,6 +10,12 @@ its bio names it ("SN85" / "subnet 85"), or its name / handle contains the subne
 128 subnets, 61 checked out (51 by website); SN21's site linked a marketing person's account — that one is not watched.
 NEWS_X_SUBNET_HANDLES adds or corrects any by hand ("72:NATIXNetwork", "21:-" = none).
 
+Founders and owners too (the user, 10 Nov: SN71's CEO @gavinzaentz posted, the monitor saw it 11 minutes later when the
+team shared it in Discord): the accounts a subnet's own account reposts, quotes, replies to or mentions, and the other X
+accounts on its website, are candidates; one whose profile has a role word (founder, CEO, CTO, owner, building …) AND
+names the subnet (its @account, "SN71", its name, or the same website) is watched for it too — at most FOUNDERS_MAX a
+subnet, checked again every FOUNDER_RECHECK_DAYS. NEWS_X_FOUNDER_HANDLES adds any by hand ("71:gavinzaentz").
+
 Kept in data/x_subnets.json and looked at again every DISCOVER_HOURS — sooner for a new subnet, a subnet whose website
 or name changed, or a profile that could not be read; at once (not in the hourly round) when a subnet's identity or owner
 changes on chain — a sold subnet's new owner posts from a new account (23 Oct: SN27 → Komms, @KommsApp).
@@ -43,6 +49,11 @@ NOT_SUBNET = frozenset({"intent", "share", "home", "i", "search", "hashtag", "lo
                         "messages", "notifications", "privacy", "tos", "x", "twitter", "elonmusk", "opentensor",
                         "bittensor", "const_reborn", "subnetradarcom", "tao_planet_"})
 GITHUB_RE = re.compile(r"github\.com/([^/\s]+/[^/\s#?]+)", re.I)
+ROLE_RE = re.compile(r"\b(co-?founders?|founders?|founding|ceo|cto|coo|cpo|chief \w+ officer|owner|creator|building|"
+                     r"built|head of|lead(?:ing)?|core (?:dev|team|contributor))\b", re.I)
+FOUNDERS_MAX = 3            # founder / owner accounts watched per subnet
+FOUNDER_RECHECK_DAYS = 7    # a candidate's profile is read again after this (a founder still one, a no still a no)
+FOUNDER_CHECKS = 40         # profiles read per round at most (the same free API serves the timelines)
 
 
 def handles_in(text: str, skip: frozenset[str] | set[str] = frozenset()) -> collections.Counter:
@@ -78,6 +89,32 @@ def checks_out(netuid: int, name: str, url: str, handle: str, user: dict) -> str
     return ""
 
 
+def founder_of(netuid: int, name: str, url: str, official: str, user: dict) -> str:
+    """Why this X profile is a founder's / owner's of the subnet — a role word AND the subnet named — or ""."""
+    bio = user.get("description") or ""
+    role = ROLE_RE.search(bio)
+    if not role:
+        return ""
+    # an account that names another subnet's number is that one's (10 Nov trial: @IOTA_SN9 — the account of SN9 — was
+    # taken for SN1 and SN13, which the same team runs; @QuantumSN48 for SN63)
+    named = ({int(k) for k in re.findall(r"\b(?:sn|subnet)\s?#?(\d{1,3})\b", bio, re.I)}
+             | {int(k) for k in re.findall(r"sn_?(\d{1,3})(?!\d)", user.get("screen_name") or "", re.I)})
+    if named and netuid not in named:
+        return ""
+    site = user.get("website") if isinstance(user.get("website"), dict) else {}
+    if official and re.search(rf"@{re.escape(official)}\b", bio, re.I):
+        ref = f"@{official}"
+    elif re.search(rf"\b(?:sn|subnet)\s?#?{netuid}\b", bio, re.I):
+        ref = f"SN{netuid}"
+    elif _same_domain(_domain(site.get("url") or site.get("display_url") or ""), _domain(url)):
+        ref = "the subnet's website"
+    elif len(_norm(name)) >= 5 and re.search(rf"\b{re.escape(name)}\b", bio, re.I):
+        ref = name
+    else:
+        return ""
+    return f"{role.group(0)} · {ref}"
+
+
 async def _get(session: aiohttp.ClientSession, url: str) -> str:
     try:
         async with session.get(url, headers=BROWSER, allow_redirects=True) as r:
@@ -102,14 +139,22 @@ async def read_profile(session: aiohttp.ClientSession, handle: str) -> dict | No
 
 
 class SubnetAccounts:
-    def __init__(self, overrides: dict[int, str] | None = None, skip: set[str] | None = None) -> None:
+    def __init__(self, overrides: dict[int, str] | None = None, skip: set[str] | None = None,
+                 founders: dict[int, list[str]] | None = None) -> None:
         self.overrides = overrides or {}        # netuid → handle ("" = none), from NEWS_X_SUBNET_HANDLES
+        self.founder_overrides = founders or {}  # netuid → [handle], from NEWS_X_FOUNDER_HANDLES
+        self.founders: dict[int, dict[str, dict]] = {}   # netuid → {handle lowercase: {"handle", "why", "at"}}
+        self.checked: dict[str, list] = {}      # handle lowercase → [when its profile was read, why / "" = no]
+        self.candidates: dict[int, collections.Counter] = {}   # netuid → accounts its own account talks to
         self.skip = frozenset(s.lower() for s in (skip or ()))   # accounts watched for themselves (const)
         self.found: dict[int, dict] = {}        # netuid → {"handle", "why", "candidate", "src", "url", "name", "at"}
         self.forced: set[int] = set()           # looked at again on the next refresh, whatever changed (a new owner)
         self.busy = False
         try:
-            self.found = {int(n): e for n, e in json.loads(CACHE_FILE.read_text()).get("found", {}).items()}
+            d = json.loads(CACHE_FILE.read_text())
+            self.found = {int(n): e for n, e in d.get("found", {}).items()}
+            self.founders = {int(n): v for n, v in (d.get("founders") or {}).items() if isinstance(v, dict)}
+            self.checked = {h: v for h, v in (d.get("checked") or {}).items() if isinstance(v, list)}
         except (OSError, ValueError):
             pass
         wrong = [n for n, e in self.found.items() if self._never((e or {}).get("handle") or "")]
@@ -121,7 +166,8 @@ class SubnetAccounts:
     def save(self) -> None:
         try:
             CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            CACHE_FILE.write_text(json.dumps({"found": self.found}, indent=1))
+            CACHE_FILE.write_text(json.dumps({"found": self.found, "founders": self.founders, "checked": self.checked},
+                                             indent=1))
         except OSError:
             pass
 
@@ -134,12 +180,85 @@ class SubnetAccounts:
                 out.pop(n, None)
         return out
 
+    def founder_handles(self) -> dict[int, list[str]]:
+        """netuid → its founders' / owners' handles: found, and added by hand."""
+        out = {n: [e["handle"] for e in v.values()] for n, v in self.founders.items() if v}
+        for n, hs in self.founder_overrides.items():
+            out[n] = list(dict.fromkeys(out.get(n, []) + list(hs)))
+        return out
+
     def accounts(self) -> dict[str, tuple[str, set[int]]]:
-        """handle (lowercase) → (handle as written, the subnets it posts for — one, unless a team runs several)."""
+        """handle (lowercase) → (handle as written, the subnets it posts for — one, unless a team runs several) — the
+        subnets' own accounts and their founders'."""
         out: dict[str, tuple[str, set[int]]] = {}
         for n, h in self.by_netuid().items():
             out.setdefault(h.lower(), (h, set()))[1].add(n)
+        for n, hs in self.founder_handles().items():
+            for h in hs:
+                if not self._never(h):
+                    out.setdefault(h.lower(), (h, set()))[1].add(n)
         return out
+
+    def is_founder(self, key: str) -> bool:
+        """A founder's account, not a subnet's own (its looks are fewer)."""
+        key = key.lower()
+        return (key not in {h.lower() for h in self.by_netuid().values()}
+                and any(key in {h.lower() for h in hs} for hs in self.founder_handles().values()))
+
+    def founder_why(self, key: str) -> str:
+        for v in self.founders.values():
+            if key.lower() in v:
+                return v[key.lower()].get("why", "")
+        return "added by hand" if any(key.lower() in {h.lower() for h in hs} for hs in self.founder_overrides.values()) else ""
+
+    def note(self, netuids, handles) -> None:
+        """Accounts a subnet's own account reposted, quoted, replied to or mentioned: founder candidates."""
+        for n in netuids:
+            c = self.candidates.setdefault(n, collections.Counter())
+            c.update(h for h in handles if h and not self._never(h))
+
+    async def check_founders(self, session: aiohttp.ClientSession, subnets: dict, profile=None, most: int = FOUNDER_CHECKS) -> int:
+        """Read the profiles of the founder candidates not read for FOUNDER_RECHECK_DAYS (the most talked-to first) and
+        keep the founders / owners among them, FOUNDERS_MAX a subnet → how many profiles were read."""
+        profile = profile or read_profile
+        official = self.by_netuid()
+        now, wait = time.time(), FOUNDER_RECHECK_DAYS * 86400
+        todo = []
+        for n, c in self.candidates.items():
+            info = subnets.get(n)
+            if info is None or not n:
+                continue
+            own = {h.lower() for h in official.values()}
+            for h, k in c.most_common(10):
+                low = h.lower()
+                if low in own or self._never(h) or now - (self.checked.get(low) or [0])[0] < wait:
+                    continue
+                todo.append((k, n, h))
+        for n, v in self.founders.items():          # the founders kept: read again once a week
+            for low, e in v.items():
+                if now - (self.checked.get(low) or [0])[0] >= wait:
+                    todo.append((99, n, e["handle"]))
+        read = 0
+        for _k, n, h in sorted(todo, key=lambda t: -t[0])[:most]:
+            info = subnets.get(n)
+            if info is None:
+                continue
+            user = await profile(session, h)
+            read += 1
+            if user is None:
+                continue
+            why = founder_of(n, info.name, info.url or "", official.get(n, ""), user)
+            self.checked[h.lower()] = [now, why]
+            have = self.founders.setdefault(n, {})
+            if why and (h.lower() in have or len(have) < FOUNDERS_MAX):
+                have[h.lower()] = {"handle": user.get("screen_name") or h, "why": why, "at": now}
+            elif not why:
+                have.pop(h.lower(), None)
+            await asyncio.sleep(PROFILE_PACE_S)
+        if read:
+            self.founders = {n: v for n, v in self.founders.items() if v and n in subnets}
+            self.save()
+        return read
 
     def due(self, subnets: dict) -> list[int]:
         """Subnets to look at now: new, website / name changed, not looked at for DISCOVER_HOURS (an unreadable
@@ -179,6 +298,7 @@ class SubnetAccounts:
             if info.url:
                 c = handles_in(await _get(session, info.url), self.skip)
                 if c:
+                    self.note([info.netuid], [h for h, _ in c.most_common(6)[1:]])   # founders are linked there too
                     return c.most_common(1)[0][0], "website"
             gh = GITHUB_RE.search(ident.get("github") or "")
             if gh:

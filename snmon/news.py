@@ -161,6 +161,8 @@ class NewsMonitor:
         self._x_accounts = None                  # the subnets' X accounts (xsubnets.SubnetAccounts), once watched
         self._acquired: dict[str, float] = {}    # "netuid:buyer" → when its acquisition was reported
         self._x_refresh_at = 0.0                 # when they are looked up again (hourly, or at once after a change)
+        self._x_founders_at = time.time() + 120  # founder candidates' profiles: first after 2 min (the timelines read
+        self._x_founder_task: asyncio.Task | None = None   # by then), then every FOUNDER_EVERY
         self._recent: dict[str, list[tuple[float, str, bool]]] = {}  # channel → (time, author, asked a question)
         self.stats: dict[str, int] = {}
         self.posted = 0
@@ -754,6 +756,9 @@ class NewsMonitor:
         ids = [i for i in self._x_ids.get(key, ()) if str(i).isdigit()]
         days = (time.time() - max(map(x_posted, ids))) / 86400 if ids else SUBNET_X_ACTIVE_DAYS
         w = 2.0 if days < SUBNET_X_ACTIVE_DAYS else 1.0 if days < SUBNET_X_QUIET_DAYS else 0.5
+        is_founder = getattr(self._x_accounts, "is_founder", None)
+        if is_founder is not None and is_founder(key):
+            w /= 2          # a founder's account: half the looks of a subnet's own (the subnets' accounts stay fast)
         self._x_weights[key] = (time.time() + 60, w)
         return w
 
@@ -782,6 +787,10 @@ class NewsMonitor:
                         self._x_discovery = asyncio.create_task(self._x_discover(session, accounts))
                     else:
                         self._x_refresh_at = time.time() + 5     # a lookup is running: the next one right after it
+                if time.time() >= self._x_founders_at and self.meta.subnets and not accounts.busy:
+                    self._x_founders_at = time.time() + FOUNDER_EVERY
+                    if self._x_founder_task is None or self._x_founder_task.done():
+                        self._x_founder_task = asyncio.create_task(self._x_founder_check(session, accounts))
                 watch = accounts.accounts()
                 if watch and time.time() >= self._x_pause_until:
                     key = self._x_next(watch, passes)
@@ -800,6 +809,21 @@ class NewsMonitor:
             if self._x_discovery is not None:
                 self._x_discovery.cancel()
 
+    async def _x_founder_check(self, session, accounts) -> None:
+        try:
+            before = {n: set(v) for n, v in accounts.founder_handles().items()}
+            read = await accounts.check_founders(session, self.meta.subnets)
+            now = accounts.founder_handles()
+            new = [f"SN{n} @{h}" for n, hs in sorted(now.items()) for h in hs if h not in before.get(n, set())]
+            if read or new:
+                print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S')} ── founders' X accounts: {sum(map(len, now.values()))} "
+                              f"watched for {len(now)} subnets ({read} profiles read"
+                              + (f"; new: {', '.join(new[:12])}" if new else "") + ")"))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("finding the founders' X accounts failed")
+
     def x_accounts_changed(self, n: int, what: str) -> None:
         """A subnet's identity or owner changed (lifecycle): look for its X account again now, not in the hourly round —
         a sold subnet's new owner posts from a new account (23 Oct: SN27 → Komms; renamed 13:53, @KommsApp found 14:00)."""
@@ -807,6 +831,9 @@ class NewsMonitor:
             return
         self._x_accounts.recheck(n)
         self._x_refresh_at = 0.0
+        if "owner" in what:            # sold: its founders are the old team's — found again from the new account
+            self._x_accounts.founders.pop(n, None)
+            self._x_accounts.candidates.pop(n, None)
         print(fmt.dim(f"{datetime.now().strftime('%H:%M:%S')} ── X account of SN{n}: looked up again now ({what})"))
 
     async def _x_discover(self, session, accounts) -> None:
@@ -855,6 +882,8 @@ class NewsMonitor:
         (x_new). The list mixes all accounts and holds only each one's last few posts: new = not seen before."""
         seen = self._x_ids.setdefault(handle.lower(), [])
         known = set(seen)
+        if hasattr(self._x_accounts, "note") and not self._x_accounts.is_founder(handle):
+            self._x_accounts.note(netuids, x_talks_to(items, handle))   # founder candidates (10 Nov)
         fresh = list(dict.fromkeys(str(t.get("id")) for t in items if str(t.get("id")) not in known))
         if not seen:
             new = []
@@ -1145,11 +1174,17 @@ class NewsMonitor:
         info = self.meta.info(n) if n is not None else None
         p0 = self.price_now(n) if n is not None else None
         sub = f" · **SN{n} {info.name}**" if info else ""
+        founder = (self._x_accounts.founder_why(handle) if feed_kind == "x_subnet" and self._x_accounts is not None
+                   and self._x_accounts.is_founder(handle) else "")
+        if founder:
+            sub += " · founder's account"
         preview = text.replace("\n", " ")
         preview = preview if len(preview) <= 140 else preview[:137].rstrip() + "…"
         fields = []
         if info:
             fields.append({"name": "Subnet", "value": f"[SN{n} · {info.name}]({alerts.subnet_url(n)})", "inline": True})
+        if founder:
+            fields.append({"name": "Account", "value": f"the subnet's founder / team ({founder})", "inline": True})
         if p0:
             ch1h = self.change(n, 300)
             fields.append({"name": "Price at post", "value": f"**{fmt.price(p0)} τ**"
@@ -1258,6 +1293,26 @@ def team_named(text: str, names: dict[int, str]) -> int | None:
 
 
 MAX_X_INFLIGHT = 8   # looks at one X account waiting for their answer at the same time
+FOUNDER_EVERY = 900  # seconds between rounds of reading founder candidates' profiles
+
+
+def x_talks_to(items: list[dict], handle: str) -> list[str]:
+    """The accounts a subnet's own account reposts, quotes, replies to or mentions in its timeline — founder candidates."""
+    out = []
+    h = handle.lower()
+    for t in items:
+        a = ((t.get("author") or {}).get("screen_name") or "")
+        rb = ((t.get("reposted_by") or {}).get("screen_name") or "")
+        if rb.lower() == h and a:
+            out.append(a)                                   # its repost of someone's post
+        if a.lower() != h:
+            continue
+        q = ((t.get("quote") or {}).get("author") or {}).get("screen_name")
+        rt = t.get("replying_to")
+        rt = rt.get("screen_name") if isinstance(rt, dict) else rt
+        out += [x for x in (q, rt) if x]
+        out += re.findall(r"@(\w{1,15})", t.get("text") or "")
+    return [x for x in out if x.lower() != h]
 
 
 def x_by(t: dict, handle: str) -> bool:

@@ -670,7 +670,8 @@ class App:
             asyncio.create_task(self.news.x_loop(self.cfg.news_x_accounts, self.cfg.news_x_poll_seconds))
         subnet_x = ""
         if self.cfg.news_x_subnets:
-            accounts = SubnetAccounts(self.cfg.news_x_subnet_handles, skip=set(self.cfg.news_x_accounts))
+            accounts = SubnetAccounts(self.cfg.news_x_subnet_handles, skip=set(self.cfg.news_x_accounts),
+                                      founders=getattr(self.cfg, "news_x_founder_handles", {}))
             asyncio.create_task(self.news.subnet_x_loop(accounts, self.cfg.news_x_subnet_rate))
             subnet_x = f" + every subnet's own account ({len(accounts.by_netuid())} known, more being looked up)"
             xlist = XList(self.cfg.x_auth_token, self.cfg.x_ct0) if self.cfg.x_auth_token and self.cfg.x_ct0 else None
