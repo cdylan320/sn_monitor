@@ -187,6 +187,11 @@ def test_a_subnet_named_in_a_post_is_found_by_its_name():
     assert subnet_named("The Score is high", names) is None                       # an ordinary-word name
     assert subnet_named("SOMA and Chutes both shipped", names) is None            # two subnets: ambiguous
     assert subnet_named("see https://example.com/SOMA/page", names) is None       # inside a link
+    # 10 Nov, @markjeffrey: "Bittensor subnet ENGY …" — next to the word "subnet", an ordinary-word name counts
+    names2 = {**names, 53: "engy", 44: "Score"}
+    assert subnet_named("Bittensor subnet ENGY is already doing this with VERY significant cost savings", names2) == 53
+    assert subnet_named("the Score subnet ships v2", names2) == 44 and subnet_named("subnet: engy", names2) == 53
+    assert subnet_named("great energy today, my score is high", names2) is None
 
 
 def test_x_repost_of_an_old_tweet_is_news():

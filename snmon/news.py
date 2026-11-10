@@ -1267,6 +1267,14 @@ def subnet_named(text: str, names: dict[int, str]) -> int | None:
     """The one subnet whose NAME the text writes as a name — exactly as the chain spells it, shouted, or capitalised for
     names the chain spells all-caps / all-lowercase (SOMA, Soma, Chutes, CHUTES). Ordinary-word names, names under 4
     letters, duplicated names and posts naming several subnets give None. Words inside links do not count."""
+    prose = re.sub(r"https?://\S+", " ", text or "")
+    # a name right next to the word "subnet" — "Bittensor subnet ENGY", "the Chutes subnet" — is a subnet's name even when
+    # it is an ordinary word (10 Nov: @markjeffrey's "Bittensor subnet ENGY is already doing this" got no subnet; "engy"
+    # is a common name). In step with sn_trader's match.find.
+    said = {n for n, name in names.items() if name and len(re.sub(r"[^a-z0-9]", "", name.lower())) >= 3 and re.search(
+            rf"\bsubnets?\s*:?\s+{re.escape(name)}\b|\b{re.escape(name)}\s+subnet\b", prose, re.I)}
+    if len(said) == 1:
+        return said.pop()
     lower = [n.lower() for n in names.values() if n]
     forms: dict[str, int] = {}
     for n, name in names.items():
