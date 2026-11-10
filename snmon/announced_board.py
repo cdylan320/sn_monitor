@@ -43,6 +43,7 @@ class AnnouncedBoard:
         self._png_at = 0.0
         self._png_key = None
         self._starts: dict[int, int | None] = {}
+        self._warned = False          # the formula and the chain's price disagreed (logged once)
         try:
             self.msg_id = json.loads(path.read_text()).get("msg_id")
         except (OSError, ValueError):
@@ -110,8 +111,14 @@ class AnnouncedBoard:
     def embed(self, head: int, facts: dict) -> dict:
         lines = ["**🏷️ Subnet registration**"]
         cost = self.rc.cost_at(head)
-        if cost is None and facts.get("cost"):
-            cost = float(facts["cost"])
+        live = float(facts["cost"]) if facts.get("cost") else None
+        if live and (cost is None or abs(cost - live) > max(0.5, live * 0.02)):
+            # the chain's own price wins: the rule may have changed (a runtime upgrade) — the chart is then off, say so
+            if cost is not None and not self._warned:
+                log.warning("registration price: the chain says %.2f τ, the formula %.2f τ — subtensor's lock cost changed?",
+                            live, cost)
+                self._warned = True
+            cost = live
         last = self.rc.last()
         if cost is not None:
             rate = (last.tao / self.rc.interval_at(head) * 3600 / BLOCK_SECONDS) if last else 0

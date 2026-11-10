@@ -62,6 +62,9 @@ def test_the_board_shows_the_price_the_swaps_and_the_start_calls_and_keeps_below
         assert payload["embeds"][0]["image"]["url"] == "attachment://regcost.png"
         await b.refresh()                                       # a minute later: edited in place, no new chart
         assert len(b.discord.sent) == 1 and b.discord.edits[-1] == ("m1", None)
+        b.watch.facts["cost"] = 120.0                           # the chain disagrees with the formula: the chain wins
+        assert "Price now: **120.00 τ**" in b.embed(HEAD, b.watch.facts)["description"]
+        b.watch.facts["cost"] = 163.9
         b.poke(True)                                            # a card went to the channel: the board goes below it
         await b.refresh()
         assert b.discord.deleted == ["m1"] and len(b.discord.sent) == 2 and b.msg_id == "m2"
