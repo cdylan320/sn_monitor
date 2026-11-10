@@ -5,7 +5,7 @@ Two projects, two repos, worked on together. Sessions start in `/root/draven/sn_
 | | Repo | Path | Runs where |
 |---|---|---|---|
 | **sn_monitor**: Bittensor subnet monitor → Discord | `cdylan320/sn_monitor` | `/root/draven/sn_monitor` | the dev VPS, pm2 app `sn-monitor` (`./start.sh`, `pm2 logs sn-monitor`) |
-| **sn_trader**: auto staking bot (package `sntrader`) | `cdylan320/trading-bot` (private) | `/root/draven/sn_trader` | **LIVE on the user's other machine** (`/root/.bittensor/trading-bot`), one screen per coldkey: `./bot.sh g2`, `./bot.sh funfun` |
+| **sn_trader**: auto staking bot (package `sntrader`) | `cdylan320/trading` (private; was `trading-bot`, GitHub redirects the old name) | `/root/draven/sn_trader` | **LIVE on the user's other machine** (`/root/.bittensor/trading-bot`), one screen per coldkey: `./bot.sh g2`, `./bot.sh funfun` |
 
 ## How we work
 - **Push everything to GitHub.** The trading machine only gets changes by `git pull` + restart. Always `git fetch` first:
