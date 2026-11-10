@@ -241,8 +241,21 @@ class Meta:
     def refresh(self, block_hash: str | None = None):
         return self._w.run(self._refresh(block_hash))
 
+    def first_emission(self, netuids: list[int]):
+        """{netuid: the block its emissions start, or None — no start call yet}, on the worker thread."""
+        return self._w.run(self._first_emission(netuids))
+
+    async def _first_emission(self, netuids: list[int]) -> dict[int, int | None]:
+        sub = await self._substrate()
+        out = {}
+        for n in netuids:
+            r = await sub.query("SubtensorModule", "FirstEmissionBlockNumber", [n])
+            v = getattr(r, "value", r)
+            out[n] = int(v) if v else None
+        return out
+
     def block_hash(self, block: int):
-        return self.run(self._block_hash(block))
+        return self._w.run(self._block_hash(block))
 
     async def _block_hash(self, block: int) -> str:
         sub = await self._substrate()

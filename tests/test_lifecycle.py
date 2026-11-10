@@ -337,6 +337,77 @@ def test_an_announced_swap_shows_when_it_is_expected():
     asyncio.run(go())
 
 
+def test_a_registration_card_shows_what_it_paid_next_to_the_last_one_and_announced_cards_are_marked_done():
+    # the user, 10 Nov: "last subnet reg 252 τ → now registered with 86 τ"; the only-announced channel shows what is not
+    # done yet — a card whose wait is over is edited to ✅ / ❌
+    from snmon.regcost import RegCost
+
+    class Hook:
+        def __init__(self):
+            self.sent, self.edits, self.n = [], [], 0
+
+        async def send(self, payload):
+            self.n += 1
+            self.sent.append(payload)
+            return str(self.n)
+
+        def edit_later(self, msg_id, payload, files=None):
+            self.edits.append((msg_id, payload))
+
+    async def go():
+        w, meta = watch({0: sub(0, "root"), 78: sub(78, "Umi", reg=8000000)})
+        w.dry_run, w.discord, w.announced_discord = False, Hook(), Hook()
+        w.regcost = RegCost(Path(tempfile.mkdtemp()) / "r.json")
+        w.regcost.regs = []
+        w.regcost.add(9447194, 252.78, 1793970024, 99, "gani")
+        w.facts = await meta.facts()
+        meta.next = {0: sub(0, "root")}
+        await w.on_events(9471098, [("NetworkRemoved", (78,)), ("NetworkRegistrationQueued", dict(QUEUED, lock_amount=85_943_556_872))])
+        queued = w.announced_discord.sent[-1]["embeds"][0]
+        price = next(f["value"] for f in queued["fields"] if f["name"] == "Registration price")
+        assert "last one **252.78 τ** (SN99 gani, <t:1793970024:d>) → this one **85.94 τ** (-66%)" == price
+        assert "queued:" + NEW_OWNER in w.announced
+        meta.next = {0: sub(0, "root"), 78: sub(78, "waw", owner=NEW_OWNER, reg=9471124)}
+        await w.on_events(9471124, [("NetworkAdded", (78, 1))])
+        added = w.announced_discord.sent[-1]["embeds"][0]
+        assert any(f["name"] == "Registration price" and "this one **85.94 τ**" in f["value"] for f in added["fields"])
+        assert w.regcost.last().netuid == 78 and w.regcost.last().name == "waw"
+        done = w.announced_discord.edits[-1][1]["embeds"][0]                                  # the queued card: done
+        assert done["title"].startswith("✅ ⏳ NEW SUBNET INCOMING") and "registered as SN78 waw" in done["fields"][-1]["value"]
+        assert "start:78" in w.announced and "queued:" + NEW_OWNER not in w.announced
+        await w.on_events(9480000, [("FirstEmissionBlockNumberSet", (78, 9480001))])
+        start = w.announced_discord.edits[-1][1]["embeds"][0]
+        assert start["title"].startswith("✅ 🆕") and not any(f["name"] == "Start call" for f in start["fields"])
+        assert "start call made" in start["fields"][-1]["value"] and "start:78" not in w.announced
+        # a swap announced, then done
+        await w.on_events(9480100, [("ColdkeySwapAnnounced", (NEW_OWNER, "0xh"))])
+        assert "swap:" + NEW_OWNER + ":78" in w.announced
+        meta.next = {0: sub(0, "root"), 78: sub(78, "waw", owner=OLD_OWNER, reg=9471124)}
+        await w.on_events(9516100, [("ColdkeySwapped", (NEW_OWNER, OLD_OWNER))])
+        swapped = w.announced_discord.edits[-1][1]["embeds"][0]
+        assert swapped["title"].startswith("✅ 🔑") and "swapped" in swapped["fields"][-1]["value"] and not w.announced
+    asyncio.run(go())
+
+
+def test_the_chain_reads_the_catch_up_and_the_board_use_really_run_on_the_worker():
+    # 10 Nov: Meta.block_hash called self.run (no such thing) — the restart catch-up failed on every block, silently
+    from snmon.meta import Meta, _Worker
+    m = Meta.__new__(Meta)
+    m._w = _Worker()
+
+    async def block_hash(b):
+        return f"0x{b}"
+
+    async def first_emission(ns):
+        return {n: None for n in ns}
+    m._block_hash, m._first_emission = block_hash, first_emission
+
+    async def go():
+        assert await m.block_hash(9447199) == "0x9447199"
+        assert await m.first_emission([78]) == {78: None}
+    asyncio.run(go())
+
+
 def test_after_a_restart_the_events_of_the_blocks_missed_are_read():
     # 6 Nov: SN99 was pruned during a restart (#9447199) — neither the removal nor the queued registration got a card
     async def go():

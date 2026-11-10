@@ -83,7 +83,13 @@ buys found on chain. They post in their own **chain updates channel** (`CHAIN_UP
 post in the news channel. The channel gets a "🟢 Chain updates are live" card at start.
 💰 Buybacks and 🏦 exchange buys go to their own channel (`BUY_HOOK_URL`), and what is announced on chain but not done
 yet — an owner coldkey swap announced and ⏰ when it can be executed, a new subnet before its start call, a queued
-registration, a scheduled dissolve — is also posted to `ONLY_ANNOUNCED_HOOK_URL` (6 Nov, the user's split). They're read from chain
+registration, a scheduled dissolve — is also posted to `ONLY_ANNOUNCED_HOOK_URL` (6 Nov, the user's split).
+That channel has a **live board** at the bottom, edited every minute: the price to register a subnet (a chart of the
+last 10 days and the next 2 — each registration doubles it, then it falls; the halving on 9 Nov made it fall twice as
+fast), when the next registration is allowed, the last ones paid, the owner coldkey swaps announced with when each can
+be executed, and the new subnets still waiting for their start call. Its cards are marked ✅ done or ❌ not happening when
+their wait ends, and a registration's card shows what it paid next to the one before ("last one 252.78 τ → this one
+85.94 τ"). They're read from chain
 events on every block, about 1 s after the block:
 
 | Card | Chain event |

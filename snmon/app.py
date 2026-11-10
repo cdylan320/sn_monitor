@@ -18,13 +18,15 @@ from datetime import datetime
 import aiohttp
 import orjson
 
-from . import alerts, buyback, fmt
+from . import alerts, buyback, fmt, regcost
 from .chain import PRICE_ALL, RAO, Block, Feed, blake2_256, decode_prices, fetch_history
 from .config import BLOCK_SECONDS, ROOT, Config
 from .detector import Detector, Signal
 from .discord import Discord
 from .dmlog import DmLog
+from .announced_board import AnnouncedBoard
 from .lifecycle import SubnetWatch
+from .regcost import RegCost
 from .mempool import Mempool
 from .bars import BUCKET, Bars
 from .meta import Meta, Trade
@@ -79,6 +81,8 @@ class App:
         self._alerts_file = ROOT / "data" / "alerts.jsonl"
         self._alerts_file.parent.mkdir(exist_ok=True)
         self.subnets: SubnetWatch | None = None
+        self.regcost: RegCost | None = None
+        self.board: AnnouncedBoard | None = None
         # a big buy's money — the owner's or an exchange's = a buyback (funding.py)
         self.funding = (Funding(TransferLog(ROOT / "data" / "transfers.db"), self.meta.account)
                         if cfg.news_buybacks and cfg.news_buyback_big_tao > 0 else None)
@@ -90,6 +94,13 @@ class App:
                 self.subnets.buy_discord = self._hook(cfg.buy_webhook_url)
             if cfg.announced_webhook_url:
                 self.subnets.announced_discord = self._hook(cfg.announced_webhook_url)
+            # the registrations and the price to register (cards, and the live board of the "only announced" channel)
+            self.regcost = RegCost(ROOT / "data" / "regcost.json")
+            self.subnets.regcost = self.regcost
+            if self.subnets.announced_discord is not None:
+                self.board = AnnouncedBoard(self.subnets.announced_discord, self.subnets, self.meta, self.regcost,
+                                            lambda: self.det.last_block, ROOT / "data" / "announced_board.json")
+                self.subnets.on_announced = self.board.poke
         self.news: NewsMonitor | None = None
         self.news_feed: NewsFeed | None = None
         if cfg.news_webhook_url and cfg.news_discord_token:
@@ -816,6 +827,21 @@ class App:
                 await asyncio.sleep(0)  # let the price hot path run between steps
         self.trend.evaluate(head, silent=True)
 
+    async def _board_start(self) -> None:
+        """The live board of the "only announced" channel: the registration history first (from the chain, once), then
+        an edit every minute."""
+        if len(self.regcost.regs) < 3:
+            url = next((u for u in self.cfg.endpoints if "archive" in u), self.cfg.endpoints[0])
+            try:
+                n = await regcost.seed(self.regcost, url)
+                for netuid, i in self.meta.subnets.items():
+                    if netuid and i.registered_at:
+                        self.regcost.named(netuid, i.name, i.registered_at)
+                print(fmt.dim(f"{now_str()} ── registration history read from the chain: {n} registrations"))
+            except Exception as e:
+                log.warning("registration history unreadable (%s) — the board starts without it", e)
+        await self.board.run()
+
     async def _chain_live(self) -> None:
         """The 'live' card of each chain channel that has a webhook of its own: chain updates, buys, only announced."""
         c, f = self.cfg, self.subnets.facts
@@ -835,12 +861,7 @@ class App:
              "Posts here, read on chain every block: 💰 a subnet's team buying its own token back (the chain's buyback "
              "call, the owner's wallet, a named buyback wallet, or a new wallet paid by the owner) · 🏦 a new, quiet wallet "
              "buying big with money straight from an exchange / bridge (it may be the owner)."),
-            (own(c.announced_webhook_url, c.subnet_webhook_url, c.buy_webhook_url), self.subnets.announced_discord,
-             "last_start_announced", "🟢 Announced, not done yet — live",
-             "Posts here what the chain says WILL happen: 🔑 an owner coldkey swap announced (it can be executed after the "
-             "wait, ~5 days — the subnet is being sold) and ⏰ when the wait is over · 🆕 a new subnet registered (its start "
-             "call, the emissions start, is still to come) · ⏳ a registration queued · ⚠️ a dissolve scheduled. "
-             "When it happens, its card is in the chain updates channel."),
+            # the "only announced" channel has its live board instead (announced_board.py)
         ]
         for apart, hook, stamp, title, text in cards:
             if apart and hook is not None and not self._recent_start(stamp):
@@ -904,6 +925,8 @@ class App:
                                   f"next to be pruned SN{self.subnets.facts.get('prune')} · registering costs "
                                   f"{fmt.tao(self.subnets.facts.get('cost', 0))} τ"))
                     await self._chain_live()
+                    if self.board is not None:
+                        asyncio.create_task(self._board_start())
             except Exception:
                 log.exception("subnet watch start failed")
             await asyncio.sleep(60)

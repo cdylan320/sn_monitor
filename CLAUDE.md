@@ -56,6 +56,16 @@ another host, the bots' `NEWS_FEED_URL` must be changed** (same token).
   5 days after its announcement); a new subnet's card says "Start call: pending". After a restart the events of the
   blocks missed are read (`data/lifecycle_block`, ≤ 600 blocks — 6 Nov: SN99 was pruned during a restart, no card), and
   each slot's last real name is kept (`names` in data/subnets.json) so a new subnet names the one it replaced.
+- #only_announced (10 Nov, user's call): a LIVE BOARD (`snmon/announced_board.py`), one message edited every minute and
+  moved below each new card — the price to register (chart over 10 days + the next 2), pending owner swaps with when each
+  can be executed, subnets waiting for their start call. Its cards are edited ✅ done / ❌ not happening when their wait
+  ends (`SubnetWatch.announced`, saved in data/subnets.json). ⏳ / 🆕 cards show "Registration price: last one X τ → this
+  one Y τ". The price (`snmon/regcost.py`, from subtensor's `get_network_lock_cost`): 2 × last lock − last lock / I ×
+  blocks since; I = 28,800 × block emission — the halving at #9471021 (9 Nov) made it 14,400: the price fell ~296 → ~87 τ
+  in one block, SN78 registered 77 blocks later for 85.94 τ. History seeded from chain (`regcost.seed`, data/regcost.json).
+  Chain reads on the Meta worker thread, the chart in a thread (~0.2 s, every 5 min): the news path is not touched.
+  `Meta` methods must go through `self._w.run` (10 Nov: `block_hash` used `self.run` — the restart catch-up had failed
+  silently since 6 Nov).
 
 ## News sources
 - Subnet X accounts: fxtwitter (one account per request, each ~every 6 s). A private X list read with the user's X
